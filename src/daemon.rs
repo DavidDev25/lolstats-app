@@ -959,7 +959,9 @@ impl<'a> Worker<'a> {
             self.resolve_from_live(l, &mut players);
         }
         let unresolved = players.iter().filter(|p| p.puuid.is_empty()).count();
-        if (players.len() < 2 || unresolved > 0) && first_seen.elapsed() < Duration::from_secs(90) {
+        // 5v5: auf alle 10 warten (ein Spieler fehlt manchmal noch in den Sitzungsdaten, z. B. beim Laden)
+        let incomplete = analysis::queue_has_lanes(queue) && players.len() < 10;
+        if (players.len() < 2 || unresolved > 0 || incomplete) && first_seen.elapsed() < Duration::from_secs(90) {
             return; // nächster Tick, Live-API ist evtl. noch nicht bereit
         }
         let me = self.me.clone().unwrap_or_default();

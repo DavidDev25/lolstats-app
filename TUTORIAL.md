@@ -66,7 +66,7 @@ lolstats ist ein kleines Programm für Windows, das neben League of Legends mitl
 <!-- /öffentlich -->
 - **Lane-Gegner-Karte:** Rang, Form, deine Bilanz gegen ihn und das Matchup aus allen Matches.
   - **Rote Warnung:** Gegen diesen Gegner stirbst du vor Minute 10 öfter als sonst. Level 1–6 also vorsichtig traden.
-  - **Matchup-Runen:** Runen, die Spieler deines Champions gegen genau diesen Gegner deutlich häufiger wählen (ab 8 gesammelten Spielen im Matchup).
+  - **Matchup-Runen:** Runen, die Spieler deines Champions gegen genau diesen Gegner deutlich häufiger wählen (ab 8 gesammelten Spielen im Matchup). Im Champ Select legt ein Klick die meistgespielte Seite gegen diesen Gegner im Client an.
 
 ### Im Spiel – CS-Tacho
 Alle 15 Sekunden abgefragt. Riot meldet CS über die Live-Schnittstelle allerdings nur in **10er-Schritten**, für alle Spieler. Der Wert springt deshalb nur etwa alle 1–2 Minuten. „Stand vor X s“ zeigt, wann zuletzt abgefragt wurde:

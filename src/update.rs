@@ -1,6 +1,8 @@
 //! Auto-Updater der öffentlichen Version: neue Versionen kommen als GitHub-Release aus REPO.
 //! Ablauf: höchstens einmal am Tag `releases/latest` abfragen -> update.json; auf Wunsch (Knopf im
-//! Fenster) `lolstats.exe apply-update`: herunterladen, SHA-256 prüfen, exe tauschen, neu starten.
+//! Fenster) `lolstats.exe apply-update`: herunterladen, SHA-256 und Ed25519-Signatur prüfen,
+//! exe tauschen, neu starten. Die Signatur macht ein Update nur mit dem privaten Schlüssel des
+//! Entwicklers möglich – ein gekapertes GitHub-Konto allein reicht nicht.
 
 use crate::store::Store;
 use serde::{Deserialize, Serialize};
@@ -14,6 +16,9 @@ pub const UPDATE: &str = "update.json";
 /// Name der exe und der Prüfsummen-Datei im Release
 pub const ASSET: &str = "lolstats.exe";
 pub const ASSET_SHA: &str = "lolstats.exe.sha256";
+pub const ASSET_SIG: &str = "lolstats.exe.sig";
+/// Öffentlicher Ed25519-Schlüssel, mit dem jede Release-exe signiert ist (tools/sign).
+const PUBLIC_KEY: &str = "7051e5a47c40dd755ec95f0dc922220f87ac3e21a132b9f87463003fbe972947";
 const CHECK_EVERY_MS: i64 = 24 * 3600 * 1000;
 /// Obergrenze für den Download (Schutz vor falschen Dateien)
 const MAX_BYTES: u64 = 60 * 1024 * 1024;
@@ -27,6 +32,7 @@ pub struct UpdateInfo {
     pub latest: String,
     pub exe_url: String,
     pub sha_url: String,
+    pub sig_url: String,
     /// Release-Notizen und Seite des Releases
     pub notes: String,
     pub page: String,
@@ -36,7 +42,7 @@ pub struct UpdateInfo {
 
 impl UpdateInfo {
     pub fn available(&self) -> bool {
-        newer(&self.latest, VERSION) && !self.exe_url.is_empty() && !self.sha_url.is_empty()
+        newer(&self.latest, VERSION) && !self.exe_url.is_empty() && !self.sha_url.is_empty() && !self.sig_url.is_empty()
     }
     pub fn due(&self, now: i64) -> bool {
         now - self.checked >= CHECK_EVERY_MS
@@ -58,6 +64,29 @@ pub fn newer(a: &str, b: &str) -> bool {
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn unhex<const N: usize>(s: &str) -> Option<[u8; N]> {
+    let s = s.trim();
+    if s.len() != 2 * N || !s.is_ascii() {
+        return None;
+    }
+    let mut out = [0u8; N];
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()?;
+    }
+    Some(out)
+}
+
+/// Prüft die Ed25519-Signatur (Hex-Text aus der .sig-Datei) der Datei gegen den eingebauten Schlüssel.
+pub fn verify_signature(bytes: &[u8], sig_text: &str) -> bool {
+    verify_with(PUBLIC_KEY, bytes, sig_text)
+}
+
+fn verify_with(public_key: &str, bytes: &[u8], sig_text: &str) -> bool {
+    let (Some(pk), Some(sig)) = (unhex::<32>(public_key), unhex::<64>(sig_text.split_whitespace().next().unwrap_or(""))) else { return false };
+    let Ok(key) = ed25519_dalek::VerifyingKey::from_bytes(&pk) else { return false };
+    key.verify_strict(bytes, &ed25519_dalek::Signature::from_bytes(&sig)).is_ok()
 }
 
 /// Erste 64 Hex-Zeichen einer .sha256-Datei ("<hash>  lolstats.exe" oder nur der Hash).
@@ -97,6 +126,7 @@ pub fn from_release(v: &serde_json::Value) -> Result<UpdateInfo, String> {
         latest,
         exe_url: asset(ASSET),
         sha_url: asset(ASSET_SHA),
+        sig_url: asset(ASSET_SIG),
         notes: v["body"].as_str().unwrap_or_default().to_string(),
         page: v["html_url"].as_str().unwrap_or_default().to_string(),
         error: String::new(),
@@ -137,6 +167,10 @@ pub fn apply(info: &UpdateInfo) -> Result<(), String> {
     if got != expected {
         return Err(format!("Prüfsumme stimmt nicht (erwartet {expected}, erhalten {got}) – Update abgebrochen"));
     }
+    let sig = get(&a, &info.sig_url)?.into_string().map_err(|e| e.to_string())?;
+    if !verify_signature(&bytes, &sig) {
+        return Err("Signatur ungültig – die Datei stammt nicht vom lolstats-Entwickler. Update abgebrochen.".into());
+    }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let new = exe.with_extension("new.exe");
     let old = exe.with_extension("old.exe");
@@ -162,6 +196,23 @@ pub fn cleanup() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signature_check() {
+        use ed25519_dalek::{Signer, SigningKey};
+        let key = SigningKey::from_bytes(&[7u8; 32]);
+        let pk: String = key.verifying_key().as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        let data = b"lolstats.exe Inhalt";
+        let sig: String = key.sign(data).to_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        assert!(verify_with(&pk, data, &format!("{sig}\n")));
+        // veränderte Datei, kaputte Signatur, fremder Schlüssel: abgelehnt
+        assert!(!verify_with(&pk, b"lolstats.exe manipuliert", &sig));
+        assert!(!verify_with(&pk, data, "00ff"));
+        let other: String = SigningKey::from_bytes(&[9u8; 32]).verifying_key().as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        assert!(!verify_with(&other, data, &sig));
+        // der eingebaute Schlüssel ist gültig
+        assert!(unhex::<32>(PUBLIC_KEY).is_some());
+    }
 
     #[test]
     fn version_compare() {

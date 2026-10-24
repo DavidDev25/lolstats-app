@@ -154,6 +154,8 @@ pub struct MatchupRunes {
     pub all: usize,
     /// Runen, die gegen den Gegner deutlich häufiger gewählt werden: (Rune, Anteil gegen ihn, Anteil sonst, Bilanz damit)
     pub notable: Vec<(i32, f64, f64, Agg)>,
+    /// meistgespielte komplette Runenseite gegen genau diesen Gegner (zum Importieren)
+    pub page: Option<(RunePage, Agg)>,
 }
 
 /// Ab so vielen Spielen gegen den Gegner werden Runen verglichen.
@@ -165,6 +167,7 @@ pub fn matchup_runes(ms: &[Match], champ: i32, opp: i32) -> MatchupRunes {
     let mut r = MatchupRunes::default();
     let mut count_vs: HashMap<i32, Agg> = HashMap::new();
     let mut count_all: HashMap<i32, usize> = HashMap::new();
+    let mut pages: HashMap<RunePage, Agg> = HashMap::new();
     for m in ms.iter().filter(|m| sr(m)) {
         for p in m.ps.iter().filter(|p| p.champ == champ && p.perks[0] != 0) {
             r.all += 1;
@@ -176,12 +179,17 @@ pub fn matchup_runes(ms: &[Match], champ: i32, opp: i32) -> MatchupRunes {
                 for &k in &p.perks {
                     count_vs.entry(k).or_default().add(p.win);
                 }
+                if p.styles[0] != 0 && p.shards.iter().all(|&s| s != 0) {
+                    pages.entry(RunePage { styles: p.styles, perks: p.perks, shards: p.shards }).or_default().add(p.win);
+                }
             }
         }
     }
     if r.vs.games < MATCHUP_RUNES_MIN {
         return r;
     }
+    // häufigste komplette Seite, aber nur, wenn sie wirklich mehrfach gespielt wurde
+    r.page = most_played(&pages).filter(|(_, a)| a.games >= 3);
     let others = (r.all as i32 - r.vs.games).max(1) as f64;
     r.notable = count_vs
         .into_iter()
@@ -401,6 +409,8 @@ mod tests {
             win,
             puuid: puuid.into(),
             perks,
+            styles: [8100, 8300],
+            shards: [5008, 5008, 5001],
             lane: "MIDDLE".into(),
             ..Default::default()
         };
@@ -422,6 +432,9 @@ mod tests {
         assert_eq!(k, 77);
         assert!((vs - 0.8).abs() < 1e-9 && (other - 0.1).abs() < 1e-9);
         assert_eq!(agg, Agg { games: 8, wins: 6 });
+        // Importseite: die meistgespielte komplette Seite gegen diesen Gegner (mit Rune 77)
+        let (page, pagg) = r.page.as_ref().unwrap();
+        assert_eq!((page.perks[3], pagg.games), (77, 8));
         // zu wenige Spiele gegen den Gegner: keine Aussage
         assert!(matchup_runes(&ms[..5], 1, 2).notable.is_empty());
     }

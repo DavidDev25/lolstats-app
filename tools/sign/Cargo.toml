@@ -1,0 +1,13 @@
+[package]
+name = "lolstats-sign"
+version = "0.1.0"
+edition = "2021"
+description = "Ed25519-Signatur der lolstats-Releases (Schlüssel erzeugen, Datei signieren, prüfen)"
+publish = false
+
+[dependencies]
+ed25519-dalek = "2"
+getrandom = "0.2"
+
+# eigenständig, nicht Teil des lolstats-Pakets
+[workspace]

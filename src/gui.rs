@@ -49,6 +49,8 @@ pub fn run_shots(dir: std::path::PathBuf) {
         let mut app = App::new(&cc.egui_ctx);
         app.cfg.expert = true; // nur im Speicher: alle Seiten inkl. Labor zeigen
         app.shot = Some(Shot { dir, tabs: SHOT_TABS.to_vec(), wait: 40, ..Default::default() });
+        // die ersten Daten wurden schon in App::new geladen -> sofort anonymisieren
+        app.anonymize();
         Ok(Box::new(app))
     }));
 }
@@ -137,6 +139,8 @@ struct App {
     update_mtime: Option<SystemTime>,
     /// zuletzt berechnete Matchup-Runen: ((Champion, Gegner, Matches), Ergebnis)
     matchup_runes: std::cell::RefCell<Option<((i32, i32, usize), stats::MatchupRunes)>>,
+    /// Rückmeldung des Matchup-Runen-Imports
+    matchup_msg: std::cell::RefCell<String>,
     style: Option<Style>,
     /// beste Picks für die eigene Elo auf der Hauptposition (Tab "Ich")
     elo_picks: EloPicks,
@@ -201,6 +205,24 @@ impl App {
         match &self.shot {
             Some(st) => s.vertical_scroll_offset(st.offset),
             None => s,
+        }
+    }
+
+    /// Für Screenshots: eigener Name -> "Du#EUW", alle anderen -> "Spieler 1..9".
+    fn anonymize(&mut self) {
+        if let Some(me) = self.me.as_mut() {
+            me.name = "Du#EUW".into();
+        }
+        if let Some(lb) = self.state.lobby.as_mut() {
+            let mut n = 0;
+            for p in lb.players.iter_mut() {
+                if p.me {
+                    p.name = "Du#EUW".into();
+                } else if !p.name.is_empty() {
+                    n += 1;
+                    p.name = format!("Spieler {n}");
+                }
+            }
         }
     }
 
@@ -299,6 +321,7 @@ impl App {
             update: Default::default(),
             update_mtime: None,
             matchup_runes: Default::default(),
+            matchup_msg: Default::default(),
             timelines: Vec::new(),
             comps: CompStats::default(),
             games: Vec::new(),
@@ -391,6 +414,10 @@ impl App {
                 SEASON => self.season = self.store.read(SEASON).unwrap_or_default(),
                 _ => {}
             }
+        }
+        // Screenshot-Modus: keine echten Riot-IDs auf den Bildern
+        if self.shot.is_some() {
+            self.anonymize();
         }
         for t in &tables {
             match t {
@@ -938,20 +965,41 @@ impl App {
         }
         if r.notable.is_empty() {
             ui.label(RichText::new(format!("Runen gegen {cname} ({} Spiele): wie gegen alle anderen – Standard-Runen passen.", r.vs.games)).small().color(theme::MUTED));
-            return;
+        } else {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(format!("Gegen {cname} öfter gewählt:")).color(GOLD)).on_hover_text(HELP_MATCHUP_RUNES);
+                for (k, vs, other, agg) in &r.notable {
+                    chip(ui, &self.names.perk(*k)).on_hover_text(format!(
+                        "{:.0} % gegen {cname} ({} Spiele, {} WR) · sonst {:.0} %",
+                        vs * 100.0,
+                        agg.games,
+                        pct(agg),
+                        other * 100.0
+                    ));
+                }
+            });
         }
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(format!("Gegen {cname} öfter gewählt:")).color(GOLD)).on_hover_text(HELP_MATCHUP_RUNES);
-            for (k, vs, other, agg) in &r.notable {
-                chip(ui, &self.names.perk(*k)).on_hover_text(format!(
-                    "{:.0} % gegen {cname} ({} Spiele, {} WR) · sonst {:.0} %",
-                    vs * 100.0,
-                    agg.games,
-                    pct(agg),
-                    other * 100.0
-                ));
-            }
-        });
+        // Import nur im Champ Select (im Spiel lassen sich die Runen nicht mehr ändern), nur per Klick
+        let champ_select = self.state.lobby.as_ref().is_some_and(|l| l.champ_select);
+        if let (true, Some((page, agg))) = (champ_select, &r.page) {
+            ui.horizontal_wrapped(|ui| {
+                let tip = format!("Meistgespielte komplette Runenseite gegen {cname}: {} Spiele, {} WR", agg.games, pct(agg));
+                if ui.button(format!("Matchup-Runen gegen {cname} importieren")).on_hover_text(tip).clicked() {
+                    let name = format!("lolstats vs {cname}");
+                    *self.matchup_msg.borrow_mut() = match Lcu::connect(&self.cfg.client_dir) {
+                        Some(l) => match lcu::import_runes(&l, page, &name) {
+                            Ok(()) => format!("✓ Runenseite „{name}“ im Client angelegt"),
+                            Err(e) => format!("Import fehlgeschlagen: {e}"),
+                        },
+                        None => "League-Client nicht gefunden".into(),
+                    };
+                }
+                let msg = self.matchup_msg.borrow();
+                if !msg.is_empty() {
+                    ui.label(RichText::new(msg.as_str()).small().color(theme::MUTED));
+                }
+            });
+        }
     }
 
     /// Nach dem Spiel: eigene Werte gegen den Schnitt der 20 Spiele davor (grün besser, rot schlechter).

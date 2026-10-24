@@ -44,6 +44,21 @@ $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 [IO.File]::WriteAllText((Join-Path $out "lolstats.exe.sha256"), "$hash  lolstats.exe`n", $utf8)
 
+# Ed25519-Signatur (der Updater installiert nur signierte Versionen). Privater Schluessel nie im Repo.
+$key = if ($env:LOLSTATS_SIGNING_KEY) { $env:LOLSTATS_SIGNING_KEY } else { Join-Path $env:USERPROFILE ".lolstats-signing\release.key" }
+if (-not (Test-Path $key)) { throw "Signaturschluessel fehlt ($key) - Release abgebrochen." }
+$env:RUSTFLAGS = "-L native=$shim -Cdlltool=dlltool"
+Push-Location (Join-Path $root "tools\sign")
+cargo build --release -q
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "Signierwerkzeug laesst sich nicht bauen." }
+Pop-Location
+$sign = Join-Path $root "tools\sign\target\release\lolstats-sign.exe"
+& $sign sign $key $exe
+if ($LASTEXITCODE -ne 0) { throw "Signieren fehlgeschlagen." }
+$pub = & $sign pubkey $key
+& $sign verify $pub $exe
+if ($LASTEXITCODE -ne 0) { throw "Signaturpruefung fehlgeschlagen." }
+
 $readme = @"
 lolstats $version - kostenloser League-of-Legends-Begleiter fuer Windows
 
@@ -58,7 +73,8 @@ Installation
 
 Updates
   lolstats prueft einmal am Tag auf github.com/DavidDev25/lolstats-app und installiert
-  neue Versionen auf Knopfdruck (Einstellungen). Jede Datei wird per SHA-256 geprueft.
+  neue Versionen auf Knopfdruck (Einstellungen). Jede Datei wird per SHA-256 und
+  Ed25519-Signatur des Entwicklers geprueft.
 
 Pruefsumme dieser Datei (SHA-256)
   $hash
@@ -98,5 +114,5 @@ Write-Host "  lolstats.exe ($size MB), SHA-256 $hash"
 Write-Host ""
 Write-Host "Veroeffentlichen (GitHub, Repo DavidDev25/lolstats-app):"
 Write-Host "  1. Neues Release mit Tag v$version anlegen, Text aus RELEASE-NOTES.md"
-Write-Host "  2. lolstats.exe und lolstats.exe.sha256 als Dateien anhaengen"
+Write-Host "  2. lolstats.exe, lolstats.exe.sha256 und lolstats.exe.sig als Dateien anhaengen"
 Write-Host "  Der Auto-Updater findet das Release ueber 'releases/latest'."

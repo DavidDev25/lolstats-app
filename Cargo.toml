@@ -1,6 +1,6 @@
 [package]
 name = "lolstats"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Ressourcensparender League-of-Legends-Begleiter (LCU) mit lokaler Statistik"
 license = "MIT"
@@ -17,8 +17,9 @@ native-tls = "0.2"
 eframe = "0.29"
 # nur PNG-Dekodierung für Item-/Champion-Bilder (ist über eframe ohnehin schon dabei)
 image = { version = "0.25", default-features = false, features = ["png"] }
-# Prüfsumme der Updates (öffentliche Version), reines Rust
+# Prüfsumme und Signatur der Updates (öffentliche Version), reines Rust
 sha2 = "0.10"
+ed25519-dalek = "2"
 windows-sys = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_Security",

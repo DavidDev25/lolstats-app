@@ -29,7 +29,17 @@ lolstats läuft unauffällig im Tray, liest nur, was dein League-Client ohnehin 
 - **Coaching** – was entscheidet *deine* Spiele? Siegchance mit/ohne frühen Tod, CS-Vorsprung, Vision, First Blood, Gold/min u. a.
 - **Pausen-Hinweis** – nach Niederlagenserien oder langen Sessions, begründet mit deinen eigenen Zahlen
 - **Labor** – Loser-Queue-Test (Mitspieler gegen Gegner nach Siegesserien, mit Zufallstest), Lobby-Stärke, Serien, Team-Kompositionen, alles als CSV exportierbar
-- **Auto-Updates** – einmal am Tag, Installation per Klick, jede Datei per SHA-256 geprüft
+- **Auto-Updates** – einmal am Tag, Installation per Klick, jede Datei per SHA-256 und Ed25519-Signatur geprüft
+
+## Screenshots
+
+| Live: Ergebnis, Pausen-Hinweis, CS-Tacho, Lane-Gegner | Live: Build und Lobby |
+|---|---|
+| ![Live](docs/live.png) | ![Lobby](docs/lobby.png) |
+| **Coaching: Was entscheidet deine Spiele?** | **Builds aus Spielen deiner Elo** |
+| ![Coaching](docs/coaching.png) | ![Builds](docs/builds.png) |
+
+*Spielernamen auf den Bildern sind anonymisiert.*
 
 ## Installation
 
@@ -43,6 +53,26 @@ lolstats läuft unauffällig im Tray, liest nur, was dein League-Client ohnehin 
 - Daten kommen nur vom lokalen League-Client (LCU) und der Live-Schnittstelle im Spiel – **kein Riot-API-Schlüssel, kein Server, kein Konto**.
 - Alles wird lokal in `%LOCALAPPDATA%\lolstats` gespeichert.
 - Netzwerk nach außen nur für: Champion-/Item-Bilder (Riot Data Dragon), Update-Prüfung (GitHub) und – nur auf Klick – Ko-fi.
+
+## FAQ
+
+**Speichert lolstats meine Daten in der Cloud?**
+Nein. Alles bleibt auf deinem PC in `%LOCALAPPDATA%\lolstats`. Es gibt kein Konto und keinen Server.
+
+**Kann ich dafür gebannt werden?**
+lolstats nutzt nur die offiziellen lokalen Schnittstellen des Clients, liest nur, was der Client ohnehin anzeigt, und greift nie ins Spiel ein. Es arbeitet nach Riots Richtlinien für Drittanbieter-Tools – eine Garantie kann allerdings kein Drittanbieter-Tool geben.
+
+**Warum warnt Windows beim ersten Start?**
+Die exe ist nicht mit einem kostenpflichtigen Zertifikat signiert. Die Echtheit sichern stattdessen die SHA-256-Prüfsumme und eine Ed25519-Signatur bei jedem Release. Der Updater installiert nur Dateien mit gültiger Signatur.
+
+**Warum steht überall „zu wenige Spiele“?**
+lolstats zeigt lieber nichts als etwas Falsches. Mit jedem Spiel werden die Auswertungen belastbarer. Lass den Client nach dem Spielen etwas offen, dann sammelt lolstats zusätzlich Matches für Builds und Vergleiche.
+
+**Wie viel Leistung kostet das im Spiel?**
+Gemessen: etwa 0,03 % CPU und 19 MB RAM für den Dienst. Das Fenster kannst du während des Spiels schließen, erfasst wird trotzdem alles.
+
+**Gibt es eine englische Oberfläche?**
+Noch nicht – ist geplant.
 
 ## Fair Play
 
