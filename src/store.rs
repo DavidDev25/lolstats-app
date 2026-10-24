@@ -109,6 +109,12 @@ impl Store {
         db.execute_batch(SCHEMA).expect("Datenbank-Schema");
         let s = Store { dir: dir.to_path_buf(), db };
         s.migrate_legacy();
+        // Version 1: Positionen erkennen jetzt CARRY/SUPPORT und Smite -> Lane-Zähler einmal neu aufbauen
+        let v: i64 = s.db.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap_or(0);
+        if v < 1 {
+            let _ = s.db.execute("DELETE FROM lane_counts", []);
+            let _ = s.db.execute_batch("PRAGMA user_version = 1");
+        }
         s.init_lane_counts();
         let (m, l) = s.purge_off_modes();
         if m + l > 0 {

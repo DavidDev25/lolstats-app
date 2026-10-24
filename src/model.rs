@@ -273,16 +273,22 @@ pub const PART_EXT: u8 = 1;
 
 /// Aktuelle Datenversion von `Part`.
 pub const PART_V: u8 = 2;
+/// Beschwörerzauber-ID von Smite
+pub const SMITE: i32 = 11;
 
 impl Part {
     /// Position aus Lane und Rolle der Match-History: TOP, JUNGLE, MID, ADC, SUPPORT ("" = unbekannt).
+    /// Smite ist der sicherste Jungle-Beleg; Riot markiert ohne Smite oft fälschlich Jungle.
+    /// Bot-Rollen kommen heute als CARRY/SUPPORT (früher DUO_CARRY/DUO_SUPPORT), Supports oft mit Lane NONE.
     pub fn position(&self) -> &'static str {
+        if self.spells.contains(&SMITE) {
+            return "JUNGLE";
+        }
         match (self.lane.as_str(), self.role.as_str()) {
+            (_, "SUPPORT" | "DUO_SUPPORT") => "SUPPORT",
+            ("BOTTOM", "CARRY" | "DUO_CARRY") => "ADC",
             ("TOP", _) => "TOP",
-            ("JUNGLE", _) => "JUNGLE",
             ("MIDDLE" | "MID", _) => "MID",
-            ("BOTTOM", "DUO_SUPPORT") => "SUPPORT",
-            ("BOTTOM", "DUO_CARRY") => "ADC",
             _ => "",
         }
     }
@@ -847,6 +853,27 @@ mod tests {
     fn utc_format() {
         assert_eq!(fmt_utc(0), "1970-01-01 00:00:00Z");
         assert_eq!(fmt_utc(1_700_000_000_000), "2023-11-14 22:13:20Z");
+    }
+
+    #[test]
+    fn positions_from_current_match_history() {
+        let p = |lane: &str, role: &str, smite: bool| Part {
+            lane: lane.into(),
+            role: role.into(),
+            spells: if smite { [4, SMITE] } else { [4, 14] },
+            ..Default::default()
+        };
+        // heutige Riot-Werte: CARRY/SUPPORT, Support oft mit Lane NONE
+        assert_eq!(p("BOTTOM", "CARRY", false).position(), "ADC");
+        assert_eq!(p("BOTTOM", "SUPPORT", false).position(), "SUPPORT");
+        assert_eq!(p("NONE", "SUPPORT", false).position(), "SUPPORT");
+        // ältere Werte bleiben gültig
+        assert_eq!(p("BOTTOM", "DUO_CARRY", false).position(), "ADC");
+        // Jungle nur mit Smite; Riots Jungle-Markierung ohne Smite ist unzuverlässig
+        assert_eq!(p("JUNGLE", "NONE", true).position(), "JUNGLE");
+        assert_eq!(p("JUNGLE", "NONE", false).position(), "");
+        assert_eq!(p("MIDDLE", "SOLO", true).position(), "JUNGLE");
+        assert_eq!(p("TOP", "SOLO", false).position(), "TOP");
     }
 
     #[test]
