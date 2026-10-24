@@ -1,101 +1,102 @@
 # lolstats
 
-**Der schlanke League-of-Legends-Begleiter für Windows – nativ in Rust, ohne Overwolf, ohne Werbung, ohne Konto.**
+**The lean League of Legends companion for Windows – native Rust, no Overwolf, no ads, no account.**
 
-lolstats läuft unauffällig im Tray, liest nur, was dein League-Client ohnehin anzeigt, und zeigt dir im eigenen Fenster, was dir beim Climben hilft: Lobby, Builds, CS-Tacho, Coaching und ehrliche Statistik über deine eigenen Spiele.
+lolstats sits quietly in your tray, only reads what your League client shows anyway, and shows you in its own window what helps you climb: lobby, builds, CS tracker, coaching and honest statistics about your own games.
 
-> *English:* lolstats is a lightweight, native Rust companion for League of Legends on Windows – a lean alternative to bloated Overwolf apps. No ads, no account, no upload: everything stays on your PC. The UI is currently German.
+> 🇩🇪 [Deutsche Version](README.de.md) · The app speaks English and German (Settings → Language).
 
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-Kaffee%20spendieren-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/daviddev25)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/daviddev25)
 
 ---
 
-## Warum lolstats?
+## Why lolstats?
 
-| | lolstats | typische Overwolf-App |
+| | lolstats | typical Overwolf app |
 |---|---|---|
-| Installation | eine exe, ~8 MB | Overwolf-Plattform + App |
-| Technik | nativ (Rust), kein Browser im Hintergrund | Chromium-basiert |
-| Last im Spiel (gemessen) | ~0,1 % CPU, ~20 MB RAM für den Dienst | – |
-| Werbung | keine | meist ja |
-| Konto / Upload | nein – alles bleibt lokal | häufig |
+| Install | one exe, ~8 MB | Overwolf platform + app |
+| Tech | native (Rust), no browser in the background | Chromium-based |
+| Load in game (measured) | ~0.1 % CPU, ~20 MB RAM for the service | – |
+| Ads | none | usually yes |
+| Account / upload | no – everything stays local | often |
 
-## Funktionen
+## Features
 
-- **Live-Lobby** – beide Teams mit Rang, Form der letzten 20 Spiele und Erfahrung auf dem Champion, Offmeta-Picks markiert
-- **Lane-Gegner-Karte** – Rang, Form, deine Bilanz gegen ihn, Matchup aus allen gesammelten Spielen, Warnung bei vielen frühen Toden gegen genau diesen Gegner
-- **Builds & Runen** – Runen, Zauber, Schuhe und Items aus gesammelten Matches nahe deiner Elo, Matchup-Runen gegen deinen Lane-Gegner, Import in den Client per Klick
-- **CS-Tacho** – im Spiel: dein CS gegen deinen eigenen Schnitt, den Elo-Schnitt deines Champions und deinen Lane-Gegner
-- **Coaching** – was entscheidet *deine* Spiele? Siegchance mit/ohne frühen Tod, CS-Vorsprung, Vision, First Blood, Gold/min u. a.
-- **Pausen-Hinweis** – nach Niederlagenserien oder langen Sessions, begründet mit deinen eigenen Zahlen
-- **Labor** – Loser-Queue-Test (Mitspieler gegen Gegner nach Siegesserien, mit Zufallstest), Lobby-Stärke, Serien, Team-Kompositionen, alles als CSV exportierbar
-- **Auto-Updates** – einmal am Tag, Installation per Klick, jede Datei per SHA-256 und Ed25519-Signatur geprüft
+- **Live lobby** – both teams with rank, form of the last 20 games and champion experience, off-meta picks marked
+- **Lane opponent card** – rank, form, your record against them, matchup from all collected games, a warning if you die early against exactly this opponent
+- **Builds & runes** – runes, spells, boots and items from collected matches near your elo, matchup runes vs your lane opponent, import into the client with one click
+- **CS tracker** – in game: your CS vs your own average, the elo average of your champion and your lane opponent
+- **Coaching** – what decides *your* games? Win rate with/without early deaths, CS lead, vision, first blood, gold/min and more
+- **Break hint** – after losing streaks or long sessions, backed by your own numbers
+- **Lab** – loser queue test (teammates vs enemies after win streaks, with a random test), lobby strength, streaks, team compositions, everything exportable as CSV
+- **Auto-updates** – once a day, install with one click, every file checked via SHA-256 and Ed25519 signature
 
 ## Screenshots
 
-| Live: Ergebnis, Pausen-Hinweis, CS-Tacho, Lane-Gegner | Live: Build und Lobby |
+| Live: result, break hint, CS tracker, lane opponent | Live: build and lobby |
 |---|---|
-| ![Live](docs/live.png) | ![Lobby](docs/lobby.png) |
-| **Coaching: Was entscheidet deine Spiele?** | **Builds aus Spielen deiner Elo** |
-| ![Coaching](docs/coaching.png) | ![Builds](docs/builds.png) |
+| ![Live](docs/en/live.png) | ![Lobby](docs/en/lobby.png) |
+| **Coaching: what decides your games?** | **Builds from games in your elo** |
+| ![Coaching](docs/en/coaching.png) | ![Builds](docs/en/builds.png) |
 
-*Spielernamen auf den Bildern sind anonymisiert.*
+*Player names in the screenshots are anonymized.*
 
 ## Installation
 
-1. Neueste `lolstats.exe` unter [Releases](https://github.com/DavidDev25/lolstats-app/releases) laden und in einen eigenen Ordner legen.
-2. Starten. Windows zeigt evtl. *„Der Computer wurde durch Windows geschützt“* → **Weitere Informationen** → **Trotzdem ausführen** (die exe ist nicht kostenpflichtig signiert; die SHA-256-Prüfsumme steht beim Release).
-3. Tray-Symbol unten rechts: **Linksklick** öffnet das Fenster, **Rechtsklick → „Mit Windows starten“** für den Autostart.
-4. League-Client starten – fertig. Im Fenster unter **Tutorial** steht alles Weitere.
+1. Download the latest `lolstats.exe` from [Releases](https://github.com/DavidDev25/lolstats-app/releases) and put it in its own folder.
+2. Start it. Windows may show *“Windows protected your PC”* → **More info** → **Run anyway** (the exe is not signed with a paid certificate; the SHA-256 checksum is listed with every release).
+3. Tray icon at the bottom right: **left-click** opens the window, **right-click → “Start with Windows”** for autostart.
+4. Start the League client – done. Everything else is explained in the window under **Tutorial**.
 
-## Datenschutz
+## Privacy
 
-- Daten kommen nur vom lokalen League-Client (LCU) und der Live-Schnittstelle im Spiel – **kein Riot-API-Schlüssel, kein Server, kein Konto**.
-- Alles wird lokal in `%LOCALAPPDATA%\lolstats` gespeichert.
-- Netzwerk nach außen nur für: Champion-/Item-Bilder (Riot Data Dragon), Update-Prüfung (GitHub) und – nur auf Klick – Ko-fi.
+- Data only comes from the local League client (LCU) and the live interface during games – **no Riot API key, no server, no account**.
+- Everything is stored locally in `%LOCALAPPDATA%\lolstats`.
+- Outgoing network only for: champion/item images (Riot Data Dragon), update checks (GitHub) and – only when you click – Ko-fi.
 
 ## FAQ
 
-**Speichert lolstats meine Daten in der Cloud?**
-Nein. Alles bleibt auf deinem PC in `%LOCALAPPDATA%\lolstats`. Es gibt kein Konto und keinen Server.
+**Does lolstats store my data in the cloud?**
+No. Everything stays on your PC in `%LOCALAPPDATA%\lolstats`. There is no account and no server.
 
-**Kann ich dafür gebannt werden?**
-lolstats nutzt nur die offiziellen lokalen Schnittstellen des Clients, liest nur, was der Client ohnehin anzeigt, und greift nie ins Spiel ein. Es arbeitet nach Riots Richtlinien für Drittanbieter-Tools – eine Garantie kann allerdings kein Drittanbieter-Tool geben.
+**Can I get banned for this?**
+lolstats only uses the client's official local interfaces, only reads what the client shows anyway and never interferes with the game. It follows Riot's policies for third-party tools – but no third-party tool can give a guarantee.
 
-**Warum warnt Windows beim ersten Start?**
-Die exe ist nicht mit einem kostenpflichtigen Zertifikat signiert. Die Echtheit sichern stattdessen die SHA-256-Prüfsumme und eine Ed25519-Signatur bei jedem Release. Der Updater installiert nur Dateien mit gültiger Signatur.
+**Why does Windows warn on first start?**
+The exe is not signed with a paid certificate. Authenticity is instead secured by the SHA-256 checksum and an Ed25519 signature on every release. The updater only installs files with a valid signature.
 
-**Warum steht überall „zu wenige Spiele“?**
-lolstats zeigt lieber nichts als etwas Falsches. Mit jedem Spiel werden die Auswertungen belastbarer. Lass den Client nach dem Spielen etwas offen, dann sammelt lolstats zusätzlich Matches für Builds und Vergleiche.
+**Why does it say “not enough games” everywhere?**
+lolstats would rather show nothing than something wrong. With every game the analyses become more reliable. Leave the client open for a while after playing, then lolstats also collects matches for builds and comparisons.
 
-**Wie viel Leistung kostet das im Spiel?**
-Gemessen: etwa 0,03 % CPU und 19 MB RAM für den Dienst. Das Fenster kannst du während des Spiels schließen, erfasst wird trotzdem alles.
+**How much performance does it cost in game?**
+Measured: about 0.03 % CPU and 19 MB RAM for the service. You can close the window while playing – everything is still recorded.
 
-**Gibt es eine englische Oberfläche?**
-Noch nicht – ist geplant.
+## Fair play
 
-## Fair Play
+lolstats is purely passive: it never interferes with the game, shows no hidden information (e.g. enemy cooldowns), does not reveal teammates in champ select and calculates no rank or elo estimates of its own.
 
-lolstats ist rein passiv: Es greift nie ins Spiel ein, zeigt keine versteckten Informationen (z. B. gegnerische Cooldowns), deckt im Champ Select keine Mitspieler auf und berechnet keine eigenen Rang- oder Elo-Schätzungen.
+## How lolstats was built
 
-## Selbst bauen
+lolstats is developed by DavidDev25 – with a lot of help from **[Claude Code](https://claude.com/claude-code)**, Anthropic's AI coding assistant. The idea, requirements, testing in real games and all decisions are mine; Claude wrote a large part of the code, the tests and the tooling (export, signing). From v0.2.0 on, Claude's contributions are credited as co-author in the commits.
 
-Voraussetzung: [Rust](https://rustup.rs) (Toolchain `stable-x86_64-pc-windows-gnu` mit MinGW oder `-msvc`).
+## Build it yourself
+
+Requirement: [Rust](https://rustup.rs) (toolchain `stable-x86_64-pc-windows-gnu` with MinGW, or `-msvc`).
 
 ```powershell
 cargo test --release
 cargo build --release
-# Release-Paket (exe + Prüfsumme) auf dem Desktop:
+# Release package (exe + checksum + signature) on the desktop:
 powershell -ExecutionPolicy Bypass -File tools\release.ps1
 ```
 
-## Lizenz
+## License
 
-[MIT](LICENSE) – frei nutzbar, veränderbar und weitergebbar, solange der Lizenzhinweis erhalten bleibt.
+[MIT](LICENSE) – free to use, modify and share as long as the license notice is kept.
 
-## Unterstützen
+## Support
 
-lolstats ist kostenlos und bleibt werbefrei. Wenn es dir beim Climben hilft, freue ich mich über einen Kaffee: **[ko-fi.com/daviddev25](https://ko-fi.com/daviddev25)** ☕
+lolstats is free and stays ad-free. If it helps you climb, I'd appreciate a coffee: **[ko-fi.com/daviddev25](https://ko-fi.com/daviddev25)** ☕
 
 ---
 

@@ -1,6 +1,8 @@
 // Release-Build ohne Konsolenfenster; Debug-Build behält die Konsole für Ausgaben.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[macro_use]
+mod i18n;
 mod analysis;
 mod daemon;
 mod gui;
@@ -129,7 +131,7 @@ fn main() {
             }
         }
         Some("status") => status(&store),
-        Some("shots") => gui::run_shots(std::env::args().nth(2).map(Into::into).unwrap_or_else(|| store.dir.join("screenshots"))),
+        Some("shots") => gui::run_shots(std::env::args().nth(2).map(Into::into).unwrap_or_else(|| store.dir.join("screenshots")), std::env::args().nth(3)),
         Some("sync") => println!("{}", daemon::sync_once(&store)),
         Some("apply-update") => apply_update(&store),
         _ => {

@@ -80,11 +80,11 @@ pub fn riot_name(p: &Value) -> String {
 pub fn ago(ts_ms: i64) -> String {
     let s = ((now_ms() - ts_ms) / 1000).max(0);
     if s < 3600 {
-        format!("vor {} min", s / 60)
+        trf!("vor {} min", "{} min ago", s / 60)
     } else if s < 86400 {
-        format!("vor {} h", s / 3600)
+        trf!("vor {} h", "{} h ago", s / 3600)
     } else {
-        format!("vor {} T", s / 86400)
+        trf!("vor {} T", "{} d ago", s / 86400)
     }
 }
 
@@ -573,6 +573,8 @@ pub struct Config {
     pub expert: bool,
     /// Tutorial wurde beim ersten Start schon gezeigt
     pub tutorial_seen: bool,
+    /// Sprache der Oberfläche: "de", "en" oder leer = wie Windows
+    pub lang: String,
     /// Felder, die diese Version nicht kennt, beim Speichern unverändert behalten
     #[serde(flatten)]
     pub other: serde_json::Map<String, serde_json::Value>,
@@ -591,6 +593,7 @@ impl Default for Config {
             max_matches: 20000,
             expert: false,
             tutorial_seen: false,
+            lang: String::new(),
             other: Default::default(),
         }
     }

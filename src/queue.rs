@@ -182,12 +182,12 @@ pub fn queue_report(lobbies: &[Lobby], ms: &[Match], me: &str, freq: &LaneFreq) 
         QueueLine { label, after_streak, other, n_streak, n_other, p }
     };
     let lines = vec![
-        test("Troll/AFK-Quote Mitspieler − Gegner", &|r| Some(r.troll_mates - r.troll_enemy)),
-        test("Rang-Ø Mitspieler − Gegner (LP)", &|r| Some(r.rank_mates? - r.rank_enemy?)),
-        test("Form Mitspieler − Gegner (Winrate)", &|r| Some(r.form_mates? - r.form_enemy?)),
-        test("KDA Mitspieler − Gegner", &|r| Some(r.kda_mates - r.kda_enemy)),
-        test("Offmeta-Quote Mitspieler − Gegner", &|r| Some(r.offmeta_mates - r.offmeta_enemy)),
-        test("Troll/AFK-Quote deiner Mitspieler", &|r| Some(r.troll_mates)),
+        test(tr!("Troll/AFK-Quote Mitspieler − Gegner", "Troll/AFK rate teammates − enemies"), &|r| Some(r.troll_mates - r.troll_enemy)),
+        test(tr!("Rang-Ø Mitspieler − Gegner (LP)", "Avg rank teammates − enemies (LP)"), &|r| Some(r.rank_mates? - r.rank_enemy?)),
+        test(tr!("Form Mitspieler − Gegner (Winrate)", "Form teammates − enemies (win rate)"), &|r| Some(r.form_mates? - r.form_enemy?)),
+        test(tr!("KDA Mitspieler − Gegner", "KDA teammates − enemies"), &|r| Some(r.kda_mates - r.kda_enemy)),
+        test(tr!("Offmeta-Quote Mitspieler − Gegner", "Off-meta rate teammates − enemies"), &|r| Some(r.offmeta_mates - r.offmeta_enemy)),
+        test(tr!("Troll/AFK-Quote deiner Mitspieler", "Troll/AFK rate of your teammates"), &|r| Some(r.troll_mates)),
     ];
     // Siegchance mit/ohne Offmeta-Pick im eigenen Team
     let wr = |with: bool| {

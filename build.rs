@@ -1,10 +1,12 @@
-//! Bettet das Tutorial (TUTORIAL.md) ins Programm ein.
+//! Bettet das Tutorial (TUTORIAL.md / TUTORIAL.en.md) ins Programm ein.
 
 use std::path::Path;
 
 fn main() {
-    println!("cargo:rerun-if-changed=TUTORIAL.md");
-    let text = std::fs::read_to_string("TUTORIAL.md").expect("TUTORIAL.md fehlt");
-    let dest = Path::new(&std::env::var("OUT_DIR").unwrap()).join("tutorial.md");
-    std::fs::write(dest, text).expect("tutorial.md schreiben");
+    let dir = std::env::var("OUT_DIR").unwrap();
+    for (src, dest) in [("TUTORIAL.md", "tutorial.md"), ("TUTORIAL.en.md", "tutorial.en.md")] {
+        println!("cargo:rerun-if-changed={src}");
+        let text = std::fs::read_to_string(src).unwrap_or_else(|_| panic!("{src} fehlt"));
+        std::fs::write(Path::new(&dir).join(dest), text).expect("Tutorial schreiben");
+    }
 }

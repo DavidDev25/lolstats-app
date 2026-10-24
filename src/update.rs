@@ -117,7 +117,7 @@ pub fn check() -> Result<UpdateInfo, String> {
 }
 
 pub fn from_release(v: &serde_json::Value) -> Result<UpdateInfo, String> {
-    let latest = v["tag_name"].as_str().ok_or("Release ohne Versionsnummer")?.trim_start_matches('v').to_string();
+    let latest = v["tag_name"].as_str().ok_or(tr!("Release ohne Versionsnummer", "Release without version number"))?.trim_start_matches('v').to_string();
     let asset = |name: &str| {
         v["assets"].as_array().into_iter().flatten().find(|x| x["name"].as_str() == Some(name)).and_then(|x| x["browser_download_url"].as_str()).unwrap_or_default().to_string()
     };
@@ -146,7 +146,7 @@ pub fn check_if_due(store: &Store) -> Option<String> {
         Ok(new) => info = new,
         Err(e) => {
             info.checked = now;
-            info.error = format!("Update-Prüfung fehlgeschlagen: {e}");
+            info.error = trf!("Update-Prüfung fehlgeschlagen: {e}", "Update check failed: {e}");
         }
     }
     store.write(UPDATE, &info);
@@ -157,30 +157,30 @@ pub fn check_if_due(store: &Store) -> Option<String> {
 /// Die laufende Datei darf unter Windows umbenannt werden; sie wird beim nächsten Start gelöscht.
 pub fn apply(info: &UpdateInfo) -> Result<(), String> {
     if !info.available() {
-        return Err("kein Update verfügbar".into());
+        return Err(tr!("kein Update verfügbar", "no update available").into());
     }
     let a = agent()?;
-    let expected = parse_sha(&get(&a, &info.sha_url)?.into_string().map_err(|e| e.to_string())?).ok_or("Prüfsummen-Datei unlesbar")?;
+    let expected = parse_sha(&get(&a, &info.sha_url)?.into_string().map_err(|e| e.to_string())?).ok_or(tr!("Prüfsummen-Datei unlesbar", "Checksum file unreadable"))?;
     let mut bytes = Vec::new();
     get(&a, &info.exe_url)?.into_reader().take(MAX_BYTES).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
     let got = sha256_hex(&bytes);
     if got != expected {
-        return Err(format!("Prüfsumme stimmt nicht (erwartet {expected}, erhalten {got}) – Update abgebrochen"));
+        return Err(trf!("Prüfsumme stimmt nicht (erwartet {expected}, erhalten {got}) – Update abgebrochen", "Checksum mismatch (expected {expected}, got {got}) – update aborted"));
     }
     let sig = get(&a, &info.sig_url)?.into_string().map_err(|e| e.to_string())?;
     if !verify_signature(&bytes, &sig) {
-        return Err("Signatur ungültig – die Datei stammt nicht vom lolstats-Entwickler. Update abgebrochen.".into());
+        return Err(tr!("Signatur ungültig – die Datei stammt nicht vom lolstats-Entwickler. Update abgebrochen.", "Invalid signature – the file does not come from the lolstats developer. Update aborted.").into());
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let new = exe.with_extension("new.exe");
     let old = exe.with_extension("old.exe");
-    std::fs::write(&new, &bytes).map_err(|e| format!("Schreiben fehlgeschlagen: {e}"))?;
+    std::fs::write(&new, &bytes).map_err(|e| trf!("Schreiben fehlgeschlagen: {e}", "Writing failed: {e}"))?;
     let _ = std::fs::remove_file(&old);
-    std::fs::rename(&exe, &old).map_err(|e| format!("Umbenennen fehlgeschlagen: {e}"))?;
+    std::fs::rename(&exe, &old).map_err(|e| trf!("Umbenennen fehlgeschlagen: {e}", "Renaming failed: {e}"))?;
     if let Err(e) = std::fs::rename(&new, &exe) {
         // zurückrollen, damit lolstats startfähig bleibt
         let _ = std::fs::rename(&old, &exe);
-        return Err(format!("Austausch fehlgeschlagen: {e}"));
+        return Err(trf!("Austausch fehlgeschlagen: {e}", "Replacing failed: {e}"));
     }
     Ok(())
 }

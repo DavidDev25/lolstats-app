@@ -1,6 +1,7 @@
 //! Fenster (eigener Prozess, nur bei Bedarf). Liest nur die Dateien des Hintergrunddienstes.
 
 use crate::analysis::{self, Best, Comp, EloPicks, CompStats, DeathStats, Farm, GameStat, Matchups, Pool, Rec, Records, Style, STYLE_LABELS};
+use crate::i18n::tx;
 use crate::icons::{self, Icons, Kind};
 use crate::lab::{self, Lab, LabRow};
 use crate::lcu::{self, Lcu};
@@ -38,7 +39,7 @@ pub fn run() {
 }
 
 /// Screenshot-Modus: jede Seite von oben bis unten als PNG in `dir` (Aufruf: `lolstats.exe shots <Ordner>`).
-pub fn run_shots(dir: std::path::PathBuf) {
+pub fn run_shots(dir: std::path::PathBuf, lang: Option<String>) {
     let _ = std::fs::create_dir_all(&dir);
     let viewport = egui::ViewportBuilder::default()
         .with_title("lolstats (Screenshots)")
@@ -48,6 +49,11 @@ pub fn run_shots(dir: std::path::PathBuf) {
         theme::apply(&cc.egui_ctx);
         let mut app = App::new(&cc.egui_ctx);
         app.cfg.expert = true; // nur im Speicher: alle Seiten inkl. Labor zeigen
+        if lang.is_some() {
+            // nur im Speicher; alles neu berechnen, damit auch berechnete Texte in dieser Sprache entstehen
+            app.force_lang = lang;
+            app.force_reload();
+        }
         app.shot = Some(Shot { dir, tabs: SHOT_TABS.to_vec(), wait: 40, ..Default::default() });
         // die ersten Daten wurden schon in App::new geladen -> sofort anonymisieren
         app.anonymize();
@@ -132,8 +138,9 @@ struct App {
     elo_csm: HashMap<i32, (f64, usize)>,
     /// Champion -> (Ø Gold/min in deiner Elo, Spiele) fürs Coaching
     elo_gpm: HashMap<i32, (f64, usize)>,
-    /// Screenshot-Modus (`lolstats.exe shots`)
+    /// Screenshot-Modus (`lolstats.exe shots`) und dort vorgegebene Sprache
     shot: Option<Shot>,
+    force_lang: Option<String>,
     /// Stand der Update-Prüfung (öffentliche Version) und Änderungszeit von update.json
     update: crate::update::UpdateInfo,
     update_mtime: Option<SystemTime>,
@@ -211,16 +218,16 @@ impl App {
     /// Für Screenshots: eigener Name -> "Du#EUW", alle anderen -> "Spieler 1..9".
     fn anonymize(&mut self) {
         if let Some(me) = self.me.as_mut() {
-            me.name = "Du#EUW".into();
+            me.name = tr!("Du#EUW", "You#EUW").into();
         }
         if let Some(lb) = self.state.lobby.as_mut() {
             let mut n = 0;
             for p in lb.players.iter_mut() {
                 if p.me {
-                    p.name = "Du#EUW".into();
+                    p.name = tr!("Du#EUW", "You#EUW").into();
                 } else if !p.name.is_empty() {
                     n += 1;
-                    p.name = format!("Spieler {n}");
+                    p.name = trf!("Spieler {n}", "Player {n}");
                 }
             }
         }
@@ -318,6 +325,7 @@ impl App {
             elo_csm: HashMap::new(),
             elo_gpm: HashMap::new(),
             shot: None,
+            force_lang: None,
             update: Default::default(),
             update_mtime: None,
             matchup_runes: Default::default(),
@@ -410,7 +418,13 @@ impl App {
                     self.icons.aliases = self.names.alias.clone();
                 }
                 ME => self.me = self.store.read(ME),
-                CONFIG => self.cfg = self.store.read(CONFIG).unwrap_or_default(),
+                CONFIG => {
+                    self.cfg = self.store.read(CONFIG).unwrap_or_default();
+                    if let Some(l) = &self.force_lang {
+                        self.cfg.lang = l.clone();
+                    }
+                    crate::i18n::apply(&self.cfg.lang);
+                }
                 SEASON => self.season = self.store.read(SEASON).unwrap_or_default(),
                 _ => {}
             }
@@ -572,36 +586,36 @@ impl App {
             // ohne Serie: Hinweis nur bei langer Session, wenn deine Daten einen Einbruch ab dem 4. Spiel zeigen
             let Some((late, early, n)) = analysis::long_session(&self.games, &t) else { return false };
             theme::section(ui, |ui| {
-                help_header(ui, &format!("Schon {} Spiele heute – Zeit für eine Pause?", t.session.0), HELP_TILT);
+                help_header(ui, &trf!("Schon {} Spiele heute – Zeit für eine Pause?", "Already {} games today – time for a break?", t.session.0), crate::i18n::l(HELP_TILT));
                 ui.label(
-                    RichText::new(format!(
-                        "Ab dem 4. Spiel einer Session gewinnst du {:.0} % ({n} Spiele), in den ersten drei {:.0} %.",
+                    RichText::new(trf!(
+                        "Ab dem 4. Spiel einer Session gewinnst du {:.0} % ({n} Spiele), in den ersten drei {:.0} %.", "From the 4th game of a session you win {:.0} % ({n} games), in the first three {:.0} %.",
                         late * 100.0,
                         early * 100.0
                     ))
                     .color(LOSS),
                 );
-                ui.label(RichText::new(format!("Heute {} Spiele, {} Siege.", t.session.0, t.session.1)).color(theme::MUTED));
+                ui.label(RichText::new(trf!("Heute {} Spiele, {} Siege.", "Today {} games, {} wins.", t.session.0, t.session.1)).color(theme::MUTED));
             });
             return true;
         }
         let wr = |(g, w): (usize, usize)| w as f64 * 100.0 / g.max(1) as f64;
         theme::section(ui, |ui| {
-            help_header(ui, &format!("{} Niederlagen in Folge – kurze Pause?", t.streak), HELP_TILT);
+            help_header(ui, &trf!("{} Niederlagen in Folge – kurze Pause?", "{} losses in a row – short break?", t.streak), crate::i18n::l(HELP_TILT));
             if t.after.0 >= analysis::TILT_MIN_GAMES {
                 let (a, o) = (wr(t.after), wr(t.other));
                 let col = if a + 5.0 < o { LOSS } else { theme::TEXT };
                 ui.label(
-                    RichText::new(format!(
-                        "Nach 2+ Niederlagen in Folge gewinnst du {a:.0} % ({} von {} Spielen), sonst {o:.0} %.",
+                    RichText::new(trf!(
+                        "Nach 2+ Niederlagen in Folge gewinnst du {a:.0} % ({} von {} Spielen), sonst {o:.0} %.", "After 2+ losses in a row you win {a:.0} % ({} of {} games), otherwise {o:.0} %.",
                         t.after.1, t.after.0
                     ))
                     .color(col),
                 );
             } else {
                 ui.label(
-                    RichText::new(format!(
-                        "Ob du nach Serien schlechter spielst, zeigt sich ab {} solchen Spielen (bisher {}).",
+                    RichText::new(trf!(
+                        "Ob du nach Serien schlechter spielst, zeigt sich ab {} solchen Spielen (bisher {}).", "Whether you play worse after streaks shows from {} such games (so far {}).",
                         analysis::TILT_MIN_GAMES,
                         t.after.0
                     ))
@@ -610,11 +624,11 @@ impl App {
             }
             if let (Some(s), Some(a)) = (t.early_streak, t.early_all) {
                 if s > a + 0.5 {
-                    ui.label(format!("Tode vor Minute 10 in dieser Serie: Ø {s:.1} – dein Schnitt {a:.1}."));
+                    ui.label(trf!("Tode vor Minute 10 in dieser Serie: Ø {s:.1} – dein Schnitt {a:.1}.", "Deaths before minute 10 in this streak: avg {s:.1} – your average {a:.1}."));
                 }
             }
             ui.label(
-                RichText::new(format!("Heute {} Spiele, {} Siege. 10–15 Minuten Pause kosten nichts.", t.session.0, t.session.1))
+                RichText::new(trf!("Heute {} Spiele, {} Siege. 10–15 Minuten Pause kosten nichts.", "Today {} games, {} wins. A 10–15 minute break costs nothing.", t.session.0, t.session.1))
                     .color(theme::MUTED),
             );
         });
@@ -627,23 +641,23 @@ impl App {
         let mins = c.time / 60.0;
         let diff_label = |d: f64| RichText::new(format!("{d:+.0}")).strong().color(if d >= 0.0 { WIN } else { LOSS });
         theme::section(ui, |ui| {
-            help_header(ui, "CS-Tacho", HELP_CS_TACHO);
+            help_header(ui, tr!("CS-Tacho", "CS tracker"), crate::i18n::l(HELP_CS_TACHO));
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new(format!("{} CS", c.cs)).size(22.0).strong());
-                ui.label(RichText::new(format!("bei {}:{:02} · {:.1} CS/min", c.time as i64 / 60, c.time as i64 % 60, c.cs as f64 / mins)).color(theme::MUTED));
+                ui.label(RichText::new(trf!("bei {}:{:02} · {:.1} CS/min", "at {}:{:02} · {:.1} CS/min", c.time as i64 / 60, c.time as i64 % 60, c.cs as f64 / mins)).color(theme::MUTED));
                 // Alter der Daten: zeigt, ob der Dienst oder die Anzeige hängt
                 // (im Screenshot-Modus ausgeblendet, sonst ändert sich das Bild jede Sekunde)
                 if self.shot.is_none() {
                     let age = (now_ms() - c.ts).max(0) / 1000;
-                    ui.label(RichText::new(format!("Stand vor {age} s")).small().color(if age > 45 { GOLD } else { theme::MUTED }));
+                    ui.label(RichText::new(trf!("Stand vor {age} s", "updated {age} s ago")).small().color(if age > 45 { GOLD } else { theme::MUTED }));
                 }
             });
             if let Some(curve) = analysis::cs_curve(&self.games, c.champ) {
                 let exp = curve.expected(mins);
                 ui.horizontal_wrapped(|ui| {
                     ui.label(diff_label(c.cs as f64 - exp));
-                    let src = if curve.champ_only { format!("auf {}", self.names.champ(c.champ)) } else { "über alle Champions".into() };
-                    ui.label(format!("gegen deinen Schnitt zu dieser Zeit ({exp:.0} CS, {} Spiele {src})", curve.games));
+                    let src = if curve.champ_only { trf!("auf {}", "on {}", self.names.champ(c.champ)) } else { tr!("über alle Champions", "across all champions").into() };
+                    ui.label(trf!("gegen deinen Schnitt zu dieser Zeit ({exp:.0} CS, {} Spiele {src})", "vs your average at this time ({exp:.0} CS, {} games {src})", curve.games));
                 });
             }
             if let Some(&(csm, n)) = self.elo_csm.get(&c.champ) {
@@ -652,13 +666,13 @@ impl App {
                 let exp = csm * (mins - 1.25).max(0.0) * 1.05;
                 ui.horizontal_wrapped(|ui| {
                     ui.label(diff_label(c.cs as f64 - exp));
-                    ui.label(format!("gegen {} in deiner Elo: Ø {csm:.1} CS/min ({n} Spiele)", self.names.champ(c.champ)));
+                    ui.label(trf!("gegen {} in deiner Elo: Ø {csm:.1} CS/min ({n} Spiele)", "vs {} in your elo: avg {csm:.1} CS/min ({n} games)", self.names.champ(c.champ)));
                 });
             }
             if let Some(o) = c.opp_cs {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(diff_label((c.cs - o) as f64));
-                    ui.label(format!("gegen deinen Lane-Gegner {} ({o} CS)", self.names.champ(c.opp_champ)));
+                    ui.label(trf!("gegen deinen Lane-Gegner {} ({o} CS)", "vs your lane opponent {} ({o} CS)", self.names.champ(c.opp_champ)));
                 });
             }
         });
@@ -670,12 +684,12 @@ impl App {
     }
 
     fn ui_live_body(&self, ui: &mut egui::Ui) {
-        theme::page_header(ui, "Live", "Lobby, Pick-Empfehlung und Ergebnis des letzten Spiels.");
+        theme::page_header(ui, "Live", tr!("Lobby, Pick-Empfehlung und Ergebnis des letzten Spiels.", "Lobby, pick suggestions and the result of your last game."));
         if let Some(r) = &self.state.result {
             let (txt, col) = match r.win {
-                Some(true) => ("Sieg", WIN),
-                Some(false) => ("Niederlage", LOSS),
-                None => ("Spiel beendet", Color32::GRAY),
+                Some(true) => (tr!("Sieg", "Victory"), WIN),
+                Some(false) => (tr!("Niederlage", "Defeat"), LOSS),
+                None => (tr!("Spiel beendet", "Game over"), Color32::GRAY),
             };
             theme::section(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -683,7 +697,7 @@ impl App {
                     match (r.lp_delta, r.win) {
                         (Some(0), Some(false)) | (None, Some(false)) if r.queue == 420 => {
                             ui.label(RichText::new("±0 LP").size(22.0).strong());
-                            ui.label(RichText::new("(Riot hat keinen LP-Abzug gemeldet)").weak());
+                            ui.label(RichText::new(tr!("(Riot hat keinen LP-Abzug gemeldet)", "(Riot reported no LP loss)")).weak());
                         }
                         (Some(d), _) => {
                             ui.label(RichText::new(format!("{d:+} LP")).size(22.0).strong());
@@ -695,7 +709,7 @@ impl App {
                             .weak(),
                     );
                 });
-                ui.label(RichText::new(format!("Rang: {}", r.rank)).size(16.0));
+                ui.label(RichText::new(trf!("Rang: {}", "Rank: {}", r.rank)).size(16.0));
                 self.ui_match_summary(ui, r.game_id);
             });
             ui.add_space(8.0);
@@ -708,15 +722,15 @@ impl App {
             ui.add_space(6.0);
         }
         let Some(lb) = &self.state.lobby else {
-            ui.label("Noch keine Lobby. Sobald du in Champ Select oder im Ladebildschirm bist, erscheinen die Spieler hier automatisch.");
+            ui.label(tr!("Noch keine Lobby. Sobald du in Champ Select oder im Ladebildschirm bist, erscheinen die Spieler hier automatisch.", "No lobby yet. As soon as you are in champ select or the loading screen, the players appear here automatically."));
             return;
         };
-        let avg = lb.avg_others().map(|v| format!(" · Lobby-Schnitt: {}", div_label(v))).unwrap_or_default();
+        let avg = lb.avg_others().map(|v| trf!(" · Lobby-Schnitt: {}", " · Lobby average: {}", div_label(v))).unwrap_or_default();
         ui.label(
             RichText::new(format!(
                 "{} · {}{} · {}",
                 queue_name(lb.queue),
-                if lb.champ_select { "Champ Select" } else { "Spiel" },
+                if lb.champ_select { "Champ Select" } else { tr!("Spiel", "Game") },
                 avg,
                 ago(lb.ts)
             ))
@@ -730,19 +744,19 @@ impl App {
             let enemies: Vec<i32> = lb.players.iter().filter(|p| p.team == 200 && p.champ > 0).map(|p| p.champ).collect();
             theme::section(ui, |ui| {
                 let vs = if enemies.is_empty() {
-                    "noch keine Gegner-Picks".to_string()
+                    tr!("noch keine Gegner-Picks", "no enemy picks yet").to_string()
                 } else {
                     enemies.iter().map(|&e| self.names.champ(e)).collect::<Vec<_>>().join(", ")
                 };
                 let pos_txt = if pos.is_empty() { "unbekannt".to_string() } else { position_label(pos).to_string() };
-                ui.label(RichText::new("Pick-Empfehlung").strong());
-                ui.label(RichText::new(format!("Position: {pos_txt} · gegen: {vs}")).weak());
+                ui.label(RichText::new(tr!("Pick-Empfehlung", "Pick suggestions")).strong());
+                ui.label(RichText::new(trf!("Position: {pos_txt} · gegen: {vs}", "Position: {pos_txt} · vs: {vs}")).weak());
                 let recs = analysis::recommend(&self.games, &self.matchups, &enemies, pos);
                 rec_grid(ui, "live_recs", &recs, &self.names);
                 for &e in &enemies {
                     let a = analysis::wr_vs(&self.games, e);
                     if a.games > 0 {
-                        ui.label(wr_text(a.wins, a.games, format!("Deine Bilanz gegen {}: {} Spiele, {} WR", self.names.champ(e), a.games, pct(&a))));
+                        ui.label(wr_text(a.wins, a.games, trf!("Deine Bilanz gegen {}: {} Spiele, {} WR", "Your record vs {}: {} games, {} WR", self.names.champ(e), a.games, pct(&a))));
                     }
                 }
             });
@@ -780,9 +794,9 @@ impl App {
                 }
                 ui.add_space(8.0);
                 let (t, c) = if team == 100 {
-                    ("Blaues Team", Color32::from_rgb(90, 140, 230))
+                    (tr!("Blaues Team", "Blue team"), Color32::from_rgb(90, 140, 230))
                 } else {
-                    ("Rotes Team", Color32::from_rgb(220, 90, 90))
+                    (tr!("Rotes Team", "Red team"), Color32::from_rgb(220, 90, 90))
                 };
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new(t).color(c).strong());
@@ -794,7 +808,7 @@ impl App {
                 wide(ui, ("lobby_scroll", team), |ui| egui::Grid::new(("lobby", team)).striped(true).min_col_width(56.0).show(ui, |ui| {
                     let ex = self.cfg.expert;
                     let head: &[&str] =
-                        if ex { &["Champion", "Spieler", "Solo/Duo", "Saison", "Letzte 20", "Auf Champ", "KDA"] } else { &["Champion", "Spieler", "Rang", "Auf Champ"] };
+                        if ex { &["Champion", tr!("Spieler", "Player"), "Solo/Duo", tr!("Saison", "Season"), tr!("Letzte 20", "Last 20"), tr!("Auf Champ", "On champ"), "KDA"] } else { &["Champion", tr!("Spieler", "Player"), tr!("Rang", "Rank"), tr!("Auf Champ", "On champ")] };
                     for h in head {
                         ui.label(RichText::new(*h).weak());
                     }
@@ -806,8 +820,8 @@ impl App {
                             icons::show(ui, &self.icons, Kind::Champ, p.champ, 22.0);
                             ui.label(self.names.champ(p.champ));
                             if p.champ > 0 && analysis::is_offmeta(&self.lane_freq, p.champ, &p.lane) {
-                                ui.label(RichText::new("Offmeta").small().color(GOLD)).on_hover_text(format!(
-                                    "{} wird in den gesammelten Matches nur selten als {} gespielt (unter {:.0} %)",
+                                ui.label(RichText::new("Offmeta").small().color(GOLD)).on_hover_text(trf!(
+                                    "{} wird in den gesammelten Matches nur selten als {} gespielt (unter {:.0} %)", "{} is rarely played as {} in the collected matches (under {:.0} %)",
                                     self.names.champ(p.champ),
                                     position_label(&p.lane),
                                     analysis::OFFMETA_SHARE * 100.0
@@ -819,10 +833,10 @@ impl App {
                             n = n.strong().color(GOLD);
                         }
                         // Einfacher Modus: Details beim Drüberfahren über den Namen
-                        let details = format!(
-                            "Saison: {}\nLetzte 20: {}\nKDA: {}",
-                            p.rank.as_ref().map(|r| if r.losses > 0 { format!("{}S {}N", r.wins, r.losses) } else { format!("{} Siege", r.wins) }).unwrap_or_else(|| "-".into()),
-                            if g > 0 { format!("{w}S {}N", g - w) } else { "-".into() },
+                        let details = trf!(
+                            "Saison: {}\nLetzte 20: {}\nKDA: {}", "Season: {}\nLast 20: {}\nKDA: {}",
+                            p.rank.as_ref().map(|r| if r.losses > 0 { trf!("{}S {}N", "{}W {}L", r.wins, r.losses) } else { trf!("{} Siege", "{} wins", r.wins) }).unwrap_or_else(|| "-".into()),
+                            if g > 0 { trf!("{w}S {}N", "{w}W {}L", g - w) } else { "-".into() },
                             if g > 0 { format!("{:.2}", p.kda) } else { "-".into() }
                         );
                         let resp = ui.label(n);
@@ -837,7 +851,7 @@ impl App {
                                     let wr = r.wins as f64 * 100.0 / r.games().max(1) as f64;
                                     ui.label(wr_text(r.wins, r.games(), format!("{wr:.0} % ({})", r.games())));
                                 } else if ex {
-                                    ui.label(RichText::new(format!("{} Siege", r.wins)).color(theme::MUTED));
+                                    ui.label(RichText::new(trf!("{} Siege", "{} wins", r.wins)).color(theme::MUTED));
                                 }
                             }
                             _ => {
@@ -848,11 +862,11 @@ impl App {
                             }
                         }
                         if ex {
-                            ui.label(if g > 0 { wr_text(w, g, format!("{w}S {}N", g - w)) } else { RichText::new("-") });
+                            ui.label(if g > 0 { wr_text(w, g, trf!("{w}S {}N", "{w}W {}L", g - w)) } else { RichText::new("-") });
                         }
                         match p.champs.iter().find(|c| c.0 == p.champ && p.champ > 0) {
                             Some(&(_, cg, cw)) => {
-                                ui.label(wr_text(cw, cg, format!("{cg} Sp. · {:.0} %", cw as f64 * 100.0 / cg as f64)))
+                                ui.label(wr_text(cw, cg, trf!("{cg} Sp. · {:.0} %", "{cg} g · {:.0} %", cw as f64 * 100.0 / cg as f64)))
                             }
                             None => ui.label("-"),
                         };
@@ -880,10 +894,10 @@ impl App {
         let Some((me, opp)) = lane_opponent(lb) else { return };
         ui.add_space(6.0);
         theme::section(ui, |ui| {
-            let guess = if opp.lane_guess { " (Lane geschätzt)" } else { "" };
-            sub_title(ui, &format!("Dein Lane-Gegner · {}{guess}", position_label(position_from_select(&me.lane))));
+            let guess = if opp.lane_guess { tr!(" (Lane geschätzt)", " (lane estimated)") } else { "" };
+            sub_title(ui, &trf!("Dein Lane-Gegner · {}{guess}", "Your lane opponent · {}{guess}", position_label(position_from_select(&me.lane))));
             if opp.champ <= 0 {
-                ui.label(RichText::new("Noch nicht gepickt.").color(theme::MUTED));
+                ui.label(RichText::new(tr!("Noch nicht gepickt.", "Not picked yet.")).color(theme::MUTED));
                 return;
             }
             let cname = self.names.champ(opp.champ);
@@ -906,16 +920,16 @@ impl App {
             let mut facts: Vec<RichText> = Vec::new();
             let (g, w) = opp.recent;
             if g > 0 {
-                facts.push(wr_text(w, g, format!("Form: {w}S {}N in den letzten {g}", g - w)));
+                facts.push(wr_text(w, g, trf!("Form: {w}S {}N in den letzten {g}", "Form: {w}W {}L in the last {g}", g - w)));
             }
             match opp.champs.iter().find(|c| c.0 == opp.champ) {
-                Some(&(_, cg, cw)) => facts.push(wr_text(cw, cg, format!("auf {cname}: {cg} Spiele, {:.0} %", cw as f64 * 100.0 / cg as f64))),
-                None if g > 0 => facts.push(RichText::new(format!("{cname} in den letzten {g} Spielen nicht gespielt")).color(GOLD)),
+                Some(&(_, cg, cw)) => facts.push(wr_text(cw, cg, trf!("auf {cname}: {cg} Spiele, {:.0} %", "on {cname}: {cg} games, {:.0} %", cw as f64 * 100.0 / cg as f64))),
+                None if g > 0 => facts.push(RichText::new(trf!("{cname} in den letzten {g} Spielen nicht gespielt", "{cname} not played in the last {g} games")).color(GOLD)),
                 None => {}
             }
             let vs = analysis::wr_vs(&self.games, opp.champ);
             if vs.games > 0 {
-                facts.push(wr_text(vs.wins, vs.games, format!("deine Bilanz gegen {cname}: {} Spiele, {}", vs.games, pct(&vs))));
+                facts.push(wr_text(vs.wins, vs.games, trf!("deine Bilanz gegen {cname}: {} Spiele, {}", "your record vs {cname}: {} games, {}", vs.games, pct(&vs))));
             }
             // frühe Tode gegen genau diesen Gegner im Vergleich zu deinem Schnitt
             let early = |g: &GameStat| g.timeline.as_ref().map(|t| t.deaths.iter().filter(|&&d| d < 600).count() as f64);
@@ -925,7 +939,7 @@ impl App {
                 let (m, a) = (mine.iter().sum::<f64>() / mine.len() as f64, all.iter().sum::<f64>() / all.len() as f64);
                 if m >= a + 0.3 {
                     facts.push(
-                        RichText::new(format!("Gegen {cname} stirbst du vor Minute 10 öfter: Ø {m:.1} ({} Spiele), sonst Ø {a:.1} – Level 1–6 vorsichtig traden", mine.len()))
+                        RichText::new(trf!("Gegen {cname} stirbst du vor Minute 10 öfter: Ø {m:.1} ({} Spiele), sonst Ø {a:.1} – Level 1–6 vorsichtig traden", "You die before minute 10 more often vs {cname}: avg {m:.1} ({} games), otherwise avg {a:.1} – trade carefully at levels 1–6", mine.len()))
                             .color(LOSS),
                     );
                 }
@@ -935,7 +949,7 @@ impl App {
                     facts.push(wr_text(
                         a.wins,
                         a.games,
-                        format!("{} gegen {cname} (alle gesammelten Matches): {} Spiele, {}", self.names.champ(me.champ), a.games, pct(a)),
+                        trf!("{} gegen {cname} (alle gesammelten Matches): {} Spiele, {}", "{} vs {cname} (all collected matches): {} games, {}", self.names.champ(me.champ), a.games, pct(a)),
                     ));
                 }
             }
@@ -959,18 +973,18 @@ impl App {
         let cname = self.names.champ(opp);
         if r.vs.games < stats::MATCHUP_RUNES_MIN {
             if r.vs.games > 0 {
-                ui.label(RichText::new(format!("Runen gegen {cname}: erst {} Spiele gesammelt (ab {})", r.vs.games, stats::MATCHUP_RUNES_MIN)).small().color(theme::MUTED));
+                ui.label(RichText::new(trf!("Runen gegen {cname}: erst {} Spiele gesammelt (ab {})", "Runes vs {cname}: only {} games collected so far (from {})", r.vs.games, stats::MATCHUP_RUNES_MIN)).small().color(theme::MUTED));
             }
             return;
         }
         if r.notable.is_empty() {
-            ui.label(RichText::new(format!("Runen gegen {cname} ({} Spiele): wie gegen alle anderen – Standard-Runen passen.", r.vs.games)).small().color(theme::MUTED));
+            ui.label(RichText::new(trf!("Runen gegen {cname} ({} Spiele): wie gegen alle anderen – Standard-Runen passen.", "Runes vs {cname} ({} games): same as against everyone else – standard runes fit.", r.vs.games)).small().color(theme::MUTED));
         } else {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(format!("Gegen {cname} öfter gewählt:")).color(GOLD)).on_hover_text(HELP_MATCHUP_RUNES);
+                ui.label(RichText::new(trf!("Gegen {cname} öfter gewählt:", "Picked more often vs {cname}:")).color(GOLD)).on_hover_text(crate::i18n::l(HELP_MATCHUP_RUNES));
                 for (k, vs, other, agg) in &r.notable {
-                    chip(ui, &self.names.perk(*k)).on_hover_text(format!(
-                        "{:.0} % gegen {cname} ({} Spiele, {} WR) · sonst {:.0} %",
+                    chip(ui, &self.names.perk(*k)).on_hover_text(trf!(
+                        "{:.0} % gegen {cname} ({} Spiele, {} WR) · sonst {:.0} %", "{:.0} % vs {cname} ({} games, {} WR) · otherwise {:.0} %",
                         vs * 100.0,
                         agg.games,
                         pct(agg),
@@ -983,15 +997,15 @@ impl App {
         let champ_select = self.state.lobby.as_ref().is_some_and(|l| l.champ_select);
         if let (true, Some((page, agg))) = (champ_select, &r.page) {
             ui.horizontal_wrapped(|ui| {
-                let tip = format!("Meistgespielte komplette Runenseite gegen {cname}: {} Spiele, {} WR", agg.games, pct(agg));
-                if ui.button(format!("Matchup-Runen gegen {cname} importieren")).on_hover_text(tip).clicked() {
+                let tip = trf!("Meistgespielte komplette Runenseite gegen {cname}: {} Spiele, {} WR", "Most played full rune page vs {cname}: {} games, {} WR", agg.games, pct(agg));
+                if ui.button(trf!("Matchup-Runen gegen {cname} importieren", "Import matchup runes vs {cname}")).on_hover_text(tip).clicked() {
                     let name = format!("lolstats vs {cname}");
                     *self.matchup_msg.borrow_mut() = match Lcu::connect(&self.cfg.client_dir) {
                         Some(l) => match lcu::import_runes(&l, page, &name) {
-                            Ok(()) => format!("✓ Runenseite „{name}“ im Client angelegt"),
-                            Err(e) => format!("Import fehlgeschlagen: {e}"),
+                            Ok(()) => trf!("✓ Runenseite „{name}“ im Client angelegt", "✓ Rune page “{name}” created in the client"),
+                            Err(e) => trf!("Import fehlgeschlagen: {e}", "Import failed: {e}"),
                         },
-                        None => "League-Client nicht gefunden".into(),
+                        None => tr!("League-Client nicht gefunden", "League client not found").into(),
                     };
                 }
                 let msg = self.matchup_msg.borrow();
@@ -1006,10 +1020,10 @@ impl App {
     fn ui_match_summary(&self, ui: &mut egui::Ui, game_id: u64) {
         ui.add_space(6.0);
         let Some((n, lines)) = analysis::match_summary(&self.games, game_id) else {
-            ui.label(RichText::new("Spieldetails werden nach dem Spiel aus der Match-History nachgeladen …").small().color(theme::MUTED));
+            ui.label(RichText::new(tr!("Spieldetails werden nach dem Spiel aus der Match-History nachgeladen …", "Game details are loaded from the match history after the game …")).small().color(theme::MUTED));
             return;
         };
-        ui.label(RichText::new(format!("Dein Spiel im Vergleich zum Schnitt deiner letzten {n} Spiele")).small().color(theme::MUTED));
+        ui.label(RichText::new(trf!("Dein Spiel im Vergleich zum Schnitt deiner letzten {n} Spiele", "Your game compared with the average of your last {n} games")).small().color(theme::MUTED));
         ui.horizontal_wrapped(|ui| {
             for l in &lines {
                 // Farbe = besser/schlechter, Pfeil = höher/niedriger (bei Toden ist niedriger besser)
@@ -1018,7 +1032,7 @@ impl App {
                     v => (if v > 0 { WIN } else { LOSS }, if l.value > l.avg { "▲" } else { "▼" }),
                 };
                 let d = l.decimals;
-                theme::mini_stat(ui, l.label, &format!("{arrow} {:.*}", d, l.value), col, &format!("Ø {:.*}", d, l.avg));
+                theme::mini_stat(ui, tx(l.label), &format!("{arrow} {:.*}", d, l.value), col, &format!("Ø {:.*}", d, l.avg));
             }
         });
     }
@@ -1028,17 +1042,17 @@ impl App {
         ui.horizontal(|ui| {
             icons::show(ui, &self.icons, Kind::Champ, b.champ, 36.0);
             ui.vertical(|ui| {
-                ui.label(RichText::new(format!("Build für {}", self.names.champ(b.champ))).font(FontId::new(16.0, theme::bold())).color(Color32::WHITE));
-                let scope = if self.build_near_elo { " · nahe deiner Elo" } else { "" };
+                ui.label(RichText::new(trf!("Build für {}", "Build for {}", self.names.champ(b.champ))).font(FontId::new(16.0, theme::bold())).color(Color32::WHITE));
+                let scope = if self.build_near_elo { tr!(" · nahe deiner Elo", " · near your elo") } else { "" };
                 ui.label(
-                    RichText::new(format!("{}{scope} · {} Spiele · {} Winrate", b.patch, b.total.games, pct(&b.total)))
+                    RichText::new(trf!("{}{scope} · {} Spiele · {} Winrate", "{}{scope} · {} games · {} win rate", b.patch, b.total.games, pct(&b.total)))
                         .small()
                         .color(theme::MUTED),
                 );
             });
         });
         if b.total.games == 0 {
-            ui.label(RichText::new("Noch keine Spiele mit diesem Champion in der Datenbank.").color(theme::MUTED));
+            ui.label(RichText::new(tr!("Noch keine Spiele mit diesem Champion in der Datenbank.", "No games with this champion in the database yet.")).color(theme::MUTED));
             return;
         }
         ui.add_space(4.0);
@@ -1052,11 +1066,11 @@ impl App {
                     }
                 });
             }
-            ui.label(RichText::new(format!("Runen aus {} Spielen · {} WR", agg.games, pct(agg))).small().color(theme::MUTED));
+            ui.label(RichText::new(trf!("Runen aus {} Spielen · {} WR", "Runes from {} games · {} WR", agg.games, pct(agg))).small().color(theme::MUTED));
         }
         if let Some((sp, agg)) = &b.spells {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Zauber").small().color(theme::MUTED));
+                ui.label(RichText::new(tr!("Zauber", "Spells")).small().color(theme::MUTED));
                 chip(ui, &self.names.spell(sp[0]));
                 chip(ui, &self.names.spell(sp[1]));
                 ui.label(RichText::new(pct(agg)).small().color(theme::MUTED));
@@ -1069,17 +1083,17 @@ impl App {
                 if let Some((id, agg)) = &b.boots {
                     let rate = agg.games as f64 * 100.0 / b.total.games.max(1) as f64;
                     let r = icons::show(ui, &self.icons, Kind::Item, *id, 34.0)
-                        .on_hover_text(format!("Schuhe: {} · {rate:.0} % Pickrate · {} WR", self.names.item(*id), pct(agg)));
+                        .on_hover_text(trf!("Schuhe: {} · {rate:.0} % Pickrate · {} WR", "Boots: {} · {rate:.0} % pick rate · {} WR", self.names.item(*id), pct(agg)));
                     ui.painter().rect_stroke(r.rect.expand(1.0), 4.0, Stroke::new(1.5_f32, GOLD));
                     ui.add_space(6.0);
                 }
                 for (id, agg) in b.items.iter().take(6) {
                     let rate = agg.games as f64 * 100.0 / b.total.games.max(1) as f64;
                     icons::show(ui, &self.icons, Kind::Item, *id, 34.0)
-                        .on_hover_text(format!("{} · {rate:.0} % Pickrate · {} WR", self.names.item(*id), pct(agg)));
+                        .on_hover_text(trf!("{} · {rate:.0} % Pickrate · {} WR", "{} · {rate:.0} % pick rate · {} WR", self.names.item(*id), pct(agg)));
                 }
             });
-            ui.label(RichText::new("Schuhe (gold) + häufigste fertige Items (Maus drüber für Details) · alles dazu im Tab Builds").small().color(theme::MUTED));
+            ui.label(RichText::new(tr!("Schuhe (gold) + häufigste fertige Items (Maus drüber für Details) · alles dazu im Tab Builds", "Boots (gold) + most common finished items (hover for details) · more in the Builds tab")).small().color(theme::MUTED));
         }
     }
 
@@ -1087,12 +1101,12 @@ impl App {
 
     /// Loser-Queue-Test: Mitspieler gegen Gegner, nach Siegesserie gegen sonst.
     fn ui_queue_test(&self, ui: &mut egui::Ui) {
-        help_header(ui, "Loser-Queue-Test", HELP_QUEUE);
+        help_header(ui, tr!("Loser-Queue-Test", "Loser queue test"), crate::i18n::l(HELP_QUEUE));
         let r = &self.queue;
         let after = r.rows.iter().filter(|x| x.streak >= 2).count();
         ui.label(
-            RichText::new(format!(
-                "{} Solo/Duo-Spiele mit allen 10 Spielern, davon {} nach 2+ Siegen in Folge · Urteil ab {} je Gruppe",
+            RichText::new(trf!(
+                "{} Solo/Duo-Spiele mit allen 10 Spielern, davon {} nach 2+ Siegen in Folge · Urteil ab {} je Gruppe", "{} Solo/Duo games with all 10 players, {} of them after 2+ wins in a row · verdict from {} per group",
                 r.rows.len(),
                 after,
                 crate::queue::QUEUE_MIN
@@ -1100,21 +1114,21 @@ impl App {
             .color(theme::MUTED),
         );
         ui.horizontal(|ui| {
-            if ui.button("Loser-Queue-Protokoll als CSV").clicked() {
+            if ui.button(tr!("Loser-Queue-Protokoll als CSV", "Loser queue log as CSV")).clicked() {
                 let path = self.store.p("loser_queue.csv");
                 let _ = std::fs::write(&path, crate::queue::queue_csv(r));
                 let _ = std::process::Command::new("explorer").arg("/select,").arg(&path).spawn();
             }
-            ui.label(RichText::new("jedes Spiel mit Troll-Quote, Rang, Form, KDA beider Teams").small().color(theme::MUTED));
+            ui.label(RichText::new(tr!("jedes Spiel mit Troll-Quote, Rang, Form, KDA beider Teams", "every game with troll rate, rank, form, KDA of both teams")).small().color(theme::MUTED));
         });
         wide(ui, "queue_scroll", |ui| {
             egui::Grid::new("queue").striped(true).show(ui, |ui| {
-                for h in ["Kennzahl", "nach Serie", "sonst", "Spiele", "p", "Urteil"] {
+                for h in [tr!("Kennzahl", "Metric"), tr!("nach Serie", "after streak"), tr!("sonst", "otherwise"), tr!("Spiele", "Games"), "p", tr!("Urteil", "Verdict")] {
                     ui.label(RichText::new(h).small().color(theme::MUTED));
                 }
                 ui.end_row();
                 for l in &r.lines {
-                    let pct_like = l.label.contains("Quote") || l.label.contains("Winrate");
+                    let pct_like = l.label.contains("Quote") || l.label.contains("Winrate") || l.label.contains("rate");
                     let fmt = |v: f64| if pct_like { format!("{:+.1} %", v * 100.0) } else { format!("{v:+.2}") };
                     ui.label(l.label);
                     ui.label(fmt(l.after_streak));
@@ -1127,7 +1141,7 @@ impl App {
                         "zu wenige Spiele" => theme::MUTED,
                         _ => theme::TEXT,
                     };
-                    ui.label(RichText::new(l.verdict()).color(col));
+                    ui.label(RichText::new(tx(l.verdict())).color(col));
                     ui.end_row();
                 }
             });
@@ -1135,7 +1149,7 @@ impl App {
         // Siegchance mit/ohne Offmeta-Pick im eigenen Team
         let [(wg, ww), (og, ow)] = r.offmeta_wr;
         let wr = |w: usize, g: usize| if g > 0 { format!("{:.0} % ({w}/{g})", w as f64 * 100.0 / g as f64) } else { "-".into() };
-        ui.label(format!("Deine Siegchance mit Offmeta-Pick im Team: {} · ohne: {}", wr(ww, wg), wr(ow, og)));
+        ui.label(trf!("Deine Siegchance mit Offmeta-Pick im Team: {} · ohne: {}", "Your win rate with an off-meta pick on your team: {} · without: {}", wr(ww, wg), wr(ow, og)));
     }
 
 
@@ -1148,21 +1162,21 @@ impl App {
             {
                 theme::page_header(
                     ui,
-                    "Matchmaking-Labor",
-                    "Jedes Solo/Duo-Spiel mit laufendem lolstats wird hier protokolliert: Lobby-Stärke, \
-                     Team-Vergleich, Serien und LP-Verlauf. Alles zur Nachbereitung, nichts davon greift ins Spiel ein.",
+                    tr!("Matchmaking-Labor", "Matchmaking lab"),
+                    tr!("Jedes Solo/Duo-Spiel mit laufendem lolstats wird hier protokolliert: Lobby-Stärke, \
+                     Team-Vergleich, Serien und LP-Verlauf. Alles zur Nachbereitung, nichts davon greift ins Spiel ein.", "Every Solo/Duo game with lolstats running is logged here: lobby strength, team comparison, streaks and LP history. Everything is for review – none of it interferes with the game."),
                 );
             }
             ui.add_space(6.0);
 
-            help_header(ui, "Kennzahlen", HELP_KPI);
+            help_header(ui, tr!("Kennzahlen", "Key figures"), crate::i18n::l(HELP_KPI));
             theme::section(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    kpi(ui, "Spiele", lab.rows.len().to_string());
-                    kpi(ui, "mit Lobby", lab.records.len().to_string());
-                    kpi(ui, "Winrate", if lab.total.games > 0 { pct(&lab.total) } else { "-".into() });
-                    kpi(ui, "Ø Sieg", lab.avg_gain.map(|g| format!("+{g:.1} LP")).unwrap_or_else(|| "-".into()));
-                    kpi(ui, "Ø Niederlage", lab.avg_loss.map(|l| format!("-{l:.1} LP")).unwrap_or_else(|| "-".into()));
+                    kpi(ui, tr!("Spiele", "Games"), lab.rows.len().to_string());
+                    kpi(ui, tr!("mit Lobby", "with lobby"), lab.records.len().to_string());
+                    kpi(ui, tr!("Winrate", "Win rate"), if lab.total.games > 0 { pct(&lab.total) } else { "-".into() });
+                    kpi(ui, tr!("Ø Sieg", "Avg win"), lab.avg_gain.map(|g| format!("+{g:.1} LP")).unwrap_or_else(|| "-".into()));
+                    kpi(ui, tr!("Ø Niederlage", "Avg loss"), lab.avg_loss.map(|l| format!("-{l:.1} LP")).unwrap_or_else(|| "-".into()));
                 });
             });
             ui.add_space(8.0);
@@ -1172,19 +1186,19 @@ impl App {
             // Loser-Queue-Test: vergleicht Mitspieler und Gegner
             theme::section(ui, |ui| self.ui_queue_test(ui));
             ui.add_space(8.0);
-            help_header(ui, "LP gegen Lobby-Ø minus Rang", HELP_SCATTER);
-            ui.label(RichText::new("Jeder Punkt = ein Spiel. Rechts = Lobby stärker als dein Rang, links = schwächer.").weak());
+            help_header(ui, tr!("LP gegen Lobby-Ø minus Rang", "LP vs lobby avg minus rank"), crate::i18n::l(HELP_SCATTER));
+            ui.label(RichText::new(tr!("Jeder Punkt = ein Spiel. Rechts = Lobby stärker als dein Rang, links = schwächer.", "Each dot = one game. Right = lobby stronger than your rank, left = weaker.")).weak());
             scatter(ui, lab);
             ui.add_space(8.0);
-            help_header(ui, "LP pro Spiel", HELP_DELTAS);
+            help_header(ui, tr!("LP pro Spiel", "LP per game"), crate::i18n::l(HELP_DELTAS));
             delta_chart(ui, &lab.rows);
             ui.add_space(10.0);
 
             columns_or_stack(ui, 2, 330.0, |ui, i| {
                 if i == 1 {
-                    help_header(ui, "Team-Ø gegen Gegner-Ø", HELP_TEAMS);
+                    help_header(ui, tr!("Team-Ø gegen Gegner-Ø", "Team avg vs enemy avg"), crate::i18n::l(HELP_TEAMS));
                     egui::Grid::new("teams").striped(true).show(ui, |ui| {
-                        for h in ["Lobby", "Spiele", "WR"] {
+                        for h in ["Lobby", tr!("Spiele", "Games"), "WR"] {
                             ui.label(RichText::new(h).weak());
                         }
                         ui.end_row();
@@ -1197,9 +1211,9 @@ impl App {
                     });
                     return;
                 }
-                help_header(ui, "Serien", HELP_STREAKS);
+                help_header(ui, tr!("Serien", "Streaks"), crate::i18n::l(HELP_STREAKS));
                 egui::Grid::new("streaks").striped(true).show(ui, |ui| {
-                    for h in ["Vor dem Spiel", "Spiele", "WR", "Ø Sieg", "Ø Niederl."] {
+                    for h in [tr!("Vor dem Spiel", "Before the game"), tr!("Spiele", "Games"), "WR", tr!("Ø Sieg", "Avg win"), tr!("Ø Niederl.", "Avg loss")] {
                         ui.label(RichText::new(h).weak());
                     }
                     ui.end_row();
@@ -1216,24 +1230,24 @@ impl App {
             ui.add_space(10.0);
 
             let cs = &self.comps;
-            help_header(ui, "Team-Kompositionen (alle gesammelten Matches)", HELP_COMPS);
+            help_header(ui, tr!("Team-Kompositionen (alle gesammelten Matches)", "Team compositions (all collected matches)"), crate::i18n::l(HELP_COMPS));
             if cs.matches == 0 {
                 ui.label(
-                    RichText::new("Noch keine Daten. Die Spielstil-Werte der Champions lädt lolstats beim nächsten Client-Start bzw. per \"Aktualisieren\".")
+                    RichText::new(tr!("Noch keine Daten. Die Spielstil-Werte der Champions lädt lolstats beim nächsten Client-Start bzw. per \"Aktualisieren\".", "No data yet. lolstats loads the champions' playstyle values on the next client start or via \"Refresh\"."))
                         .weak(),
                 );
             } else {
                 ui.label(
-                    RichText::new(format!(
-                        "{} Matches · jede Zeile aus Sicht eines Teams (jedes Match zählt für Sieger und Verlierer)",
+                    RichText::new(trf!(
+                        "{} Matches · jede Zeile aus Sicht eines Teams (jedes Match zählt für Sieger und Verlierer)", "{} matches · each row from one team's point of view (every match counts for winner and loser)",
                         cs.matches
                     ))
                     .weak(),
                 );
                 let rows: [(&str, Vec<(&str, Agg)>); 3] = [
-                    ("Schadensprofil", cs.profile.iter().map(|(p, a)| (p.label(), *a)).collect()),
-                    ("CC gegenüber Gegner", cs.cc.clone()),
-                    ("Haltbarkeit gegenüber Gegner", cs.durability.clone()),
+                    (tr!("Schadensprofil", "Damage profile"), cs.profile.iter().map(|(p, a)| (p.label(), *a)).collect()),
+                    (tr!("CC gegenüber Gegner", "CC vs enemy"), cs.cc.clone()),
+                    (tr!("Haltbarkeit gegenüber Gegner", "Durability vs enemy"), cs.durability.clone()),
                 ];
                 columns_or_stack(ui, 3, 230.0, |ui, i| {
                     let (title, lines) = &rows[i];
@@ -1241,7 +1255,7 @@ impl App {
                     egui::Grid::new(("comp", i)).striped(true).show(ui, |ui| {
                         for (label, a) in lines {
                             ui.label(*label);
-                            ui.label(format!("{} T.", a.games));
+                            ui.label(trf!("{} T.", "{} t.", a.games));
                             ui.label(if a.games > 0 { wr_text(a.wins, a.games, pct(a)) } else { RichText::new("-") });
                             ui.end_row();
                         }
@@ -1251,16 +1265,16 @@ impl App {
             ui.add_space(10.0);
 
             ui.horizontal(|ui| {
-                help_header(ui, "Protokoll", HELP_LOG);
-                ui.selectable_value(&mut self.lab_filter, 0, "Alle");
-                ui.selectable_value(&mut self.lab_filter, 1, "Siege");
-                ui.selectable_value(&mut self.lab_filter, 2, "Niederlagen");
-                ui.checkbox(&mut self.lab_only_lobby, "nur mit Lobby");
-                if ui.button("Als CSV exportieren").clicked() {
+                help_header(ui, tr!("Protokoll", "Log"), crate::i18n::l(HELP_LOG));
+                ui.selectable_value(&mut self.lab_filter, 0, tr!("Alle", "All"));
+                ui.selectable_value(&mut self.lab_filter, 1, tr!("Siege", "Wins"));
+                ui.selectable_value(&mut self.lab_filter, 2, tr!("Niederlagen", "Losses"));
+                ui.checkbox(&mut self.lab_only_lobby, tr!("nur mit Lobby", "only with lobby"));
+                if ui.button(tr!("Als CSV exportieren", "Export as CSV")).clicked() {
                     let path = self.store.p("labor.csv");
                     self.lab_msg = match std::fs::write(&path, lab::csv(&self.lab)) {
-                        Ok(()) => format!("Gespeichert: {}", path.display()),
-                        Err(e) => format!("Fehler: {e}"),
+                        Ok(()) => trf!("Gespeichert: {}", "Saved: {}", path.display()),
+                        Err(e) => trf!("Fehler: {e}", "Error: {e}"),
                     };
                 }
             });
@@ -1281,12 +1295,12 @@ impl App {
                 .filter(|r| !only_lobby || r.lobby.is_some())
                 .collect();
             if rows.is_empty() {
-                ui.label(RichText::new("Noch keine Spiele protokolliert.").weak());
+                ui.label(RichText::new(tr!("Noch keine Spiele protokolliert.", "No games logged yet.")).weak());
                 return;
             }
             wide(ui, "protokoll_scroll", |ui| egui::Grid::new("protokoll").striped(true).show(ui, |ui| {
                 let mut head = vec!["", "LP"];
-                head.extend(["Rang vorher", "Rang nachher", "Lobby-Ø", "Team-Ø", "Gegner-Ø", "Serie"]);
+                head.extend([tr!("Rang vorher", "Rank before"), tr!("Rang nachher", "Rank after"), tr!("Lobby-Ø", "Lobby avg"), tr!("Team-Ø", "Team avg"), tr!("Gegner-Ø", "Enemy avg"), tr!("Serie", "Streak")]);
                 head.push("vor");
                 for h in head {
                     ui.label(RichText::new(h).weak());
@@ -1297,9 +1311,9 @@ impl App {
                     let (t, c) = if r.shield {
                         ("N*", Color32::GRAY)
                     } else if r.win {
-                        ("S", WIN)
+                        (tr!("S", "W"), WIN)
                     } else {
-                        ("N", LOSS)
+                        (tr!("N", "L"), LOSS)
                     };
                     ui.label(RichText::new(t).strong().color(c));
                     ui.label(format!("{:+}", r.delta));
@@ -1313,7 +1327,7 @@ impl App {
                     ui.end_row();
                 }
             }));
-            ui.label(RichText::new("N* = Niederlage ohne LP-Verlust (Abstiegs- oder Verlustschutz, zählt nicht als Messpunkt).").small().weak());
+            ui.label(RichText::new(tr!("N* = Niederlage ohne LP-Verlust (Abstiegs- oder Verlustschutz, zählt nicht als Messpunkt).", "N* = loss without LP loss (demotion or loss protection, not counted as a data point).")).small().weak());
         });
     }
 
@@ -1321,15 +1335,15 @@ impl App {
         self.scroll().show(ui, |ui| {
             let gs = &self.games;
             let ex = self.cfg.expert;
-            theme::page_header(ui, "Leistung", "Deine Spiele auf Summoner's Rift: Rekorde, Farmen, Spielstil und Matchups.");
+            theme::page_header(ui, tr!("Leistung", "Performance"), tr!("Deine Spiele auf Summoner's Rift: Rekorde, Farmen, Spielstil und Matchups.", "Your Summoner's Rift games: records, farming, playstyle and matchups."));
             if gs.is_empty() {
-                ui.label(RichText::new("Noch keine eigenen Spiele auf Summoner's Rift in der Datenbank.").weak());
+                ui.label(RichText::new(tr!("Noch keine eigenen Spiele auf Summoner's Rift in der Datenbank.", "No own Summoner's Rift games in the database yet.")).weak());
                 return;
             }
             if ex {
                 ui.label(
-                    RichText::new(format!(
-                        "{} eigene Spiele auf Summoner's Rift · {} davon mit Timeline (wird im Hintergrund nachgeladen)",
+                    RichText::new(trf!(
+                        "{} eigene Spiele auf Summoner's Rift · {} davon mit Timeline (wird im Hintergrund nachgeladen)", "{} own Summoner's Rift games · {} of them with timeline (loaded in the background)",
                         gs.len(),
                         self.deaths.games
                     ))
@@ -1343,26 +1357,26 @@ impl App {
             let d = &self.deaths;
             theme::section(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    kpi(ui, "Winrate (letzte 20)", format!("{:.0} %", avg(&|g| if g.win { 100.0 } else { 0.0 })));
-                    kpi(ui, "Ø KDA", format!("{:.2}", avg(&|g| g.kda())));
-                    kpi(ui, "Ø CS/min", format!("{:.1}", avg(&|g| g.csm())));
-                    kpi(ui, "Ø CS nach 10 min", d.cs10.map(|v| format!("{v:.0}")).unwrap_or_else(|| "-".into()));
-                    kpi(ui, "Ø Gold nach 10 min", d.gold10.map(|v| format!("{v:.0}")).unwrap_or_else(|| "-".into()));
+                    kpi(ui, tr!("Winrate (letzte 20)", "Win rate (last 20)"), format!("{:.0} %", avg(&|g| if g.win { 100.0 } else { 0.0 })));
+                    kpi(ui, tr!("Ø KDA", "Avg KDA"), format!("{:.2}", avg(&|g| g.kda())));
+                    kpi(ui, tr!("Ø CS/min", "Avg CS/min"), format!("{:.1}", avg(&|g| g.csm())));
+                    kpi(ui, tr!("Ø CS nach 10 min", "Avg CS at 10 min"), d.cs10.map(|v| format!("{v:.0}")).unwrap_or_else(|| "-".into()));
+                    kpi(ui, tr!("Ø Gold nach 10 min", "Avg gold at 10 min"), d.gold10.map(|v| format!("{v:.0}")).unwrap_or_else(|| "-".into()));
                 });
             });
             ui.add_space(8.0);
 
             let tips: Vec<String> = gs
                 .iter()
-                .map(|g| format!("{} {} · {}", if g.win { "Sieg" } else { "Niederlage" }, self.names.champ(g.champ), ago(g.ts)))
+                .map(|g| format!("{} {} · {}", if g.win { tr!("Sieg", "Victory") } else { tr!("Niederlage", "Defeat") }, self.names.champ(g.champ), ago(g.ts)))
                 .collect();
             let series = |f: &dyn Fn(&GameStat) -> f64| analysis::rolling(&gs.iter().map(f).collect::<Vec<_>>(), 10);
             theme::section(ui, |ui| {
-                sub_title(ui, "Winrate-Verlauf");
-                ui.label(RichText::new("gleitender Schnitt über 10 Spiele").small().color(theme::MUTED));
+                sub_title(ui, tr!("Winrate-Verlauf", "Win rate history"));
+                ui.label(RichText::new(tr!("gleitender Schnitt über 10 Spiele", "rolling average over 10 games")).small().color(theme::MUTED));
                 line_chart(ui, &series(&|g| if g.win { 100.0 } else { 0.0 }), WIN, &|v| format!("{v:.0} %"), &tips);
                 if ex {
-                    ui.label(RichText::new("CS pro Minute").weak());
+                    ui.label(RichText::new(tr!("CS pro Minute", "CS per minute")).weak());
                     line_chart(ui, &series(&|g| g.csm()), GOLD, &|v| format!("{v:.1}"), &tips);
                     ui.label(RichText::new("KDA").weak());
                     line_chart(ui, &series(&|g| g.kda()), BLUE, &|v| format!("{v:.2}"), &tips);
@@ -1372,28 +1386,28 @@ impl App {
 
             if !ex && d.games > 0 {
                 theme::section(ui, |ui| {
-                    sub_title(ui, "Tode");
-                    let first = d.first_death.map(|f| format!("erster Tod im Schnitt nach {}:{:02} min · ", f as i32 / 60, f as i32 % 60)).unwrap_or_default();
-                    ui.label(format!("{first}in {:.0} % deiner Spiele kein Tod vor Minute 10", d.clean_10 * 100.0));
+                    sub_title(ui, tr!("Tode", "Deaths"));
+                    let first = d.first_death.map(|f| trf!("erster Tod im Schnitt nach {}:{:02} min · ", "first death on average at {}:{:02} min ·", f as i32 / 60, f as i32 % 60)).unwrap_or_default();
+                    ui.label(trf!("{first}in {:.0} % deiner Spiele kein Tod vor Minute 10", "{first}no death before minute 10 in {:.0} % of your games", d.clean_10 * 100.0));
                 });
                 ui.add_space(10.0);
             }
             if ex {
                 theme::section(ui, |ui| {
-                    ui.label(RichText::new("Death-Timings").strong());
+                    ui.label(RichText::new(tr!("Death-Timings", "Death timings")).strong());
                     if d.games == 0 {
-                        ui.label(RichText::new("Noch keine Timelines. lolstats lädt sie außerhalb von Spielen nach (eine pro 2 s).").weak());
+                        ui.label(RichText::new(tr!("Noch keine Timelines. lolstats lädt sie außerhalb von Spielen nach (eine pro 2 s).", "No timelines yet. lolstats loads them outside of games (one every 2 s).")).weak());
                         return;
                     }
-                    ui.label(format!(
-                        "Ø Tode pro Spiel: Early (bis 14 min) {:.1} · Mid (14–25 min) {:.1} · Late (ab 25 min) {:.1}",
+                    ui.label(trf!(
+                        "Ø Tode pro Spiel: Early (bis 14 min) {:.1} · Mid (14–25 min) {:.1} · Late (ab 25 min) {:.1}", "Avg deaths per game: early (until 14 min) {:.1} · mid (14–25 min) {:.1} · late (from 25 min) {:.1}",
                         d.early, d.mid, d.late
                     ));
                     if let Some(f) = d.first_death {
-                        ui.label(format!("Ø erster Tod nach {}:{:02} min", f as i32 / 60, f as i32 % 60));
+                        ui.label(trf!("Ø erster Tod nach {}:{:02} min", "Avg first death at {}:{:02} min", f as i32 / 60, f as i32 % 60));
                     }
-                    ui.label(format!("Ohne Tod vor Minute 10: {:.0} % deiner Spiele", d.clean_10 * 100.0));
-                    ui.label(RichText::new(format!("Tode nach Spielminute ({} Spiele)", d.games)).weak());
+                    ui.label(trf!("Ohne Tod vor Minute 10: {:.0} % deiner Spiele", "No death before minute 10: {:.0} % of your games", d.clean_10 * 100.0));
+                    ui.label(RichText::new(trf!("Tode nach Spielminute ({} Spiele)", "Deaths by game minute ({} games)", d.games)).weak());
                     death_histogram(ui, gs);
                 });
                 ui.add_space(10.0);
@@ -1412,23 +1426,23 @@ impl App {
 
             let p = &self.pool;
             theme::section(ui, |ui| {
-                sub_title(ui, &format!("Champion-Pool (letzte {} Spiele)", p.games));
+                sub_title(ui, &trf!("Champion-Pool (letzte {} Spiele)", "Champion pool (last {} games)", p.games));
                 ui.label(
-                    RichText::new(format!("{} verschiedene Champions · die Top 3 machen {:.0} % deiner Spiele aus", p.distinct, p.top3 * 100.0))
+                    RichText::new(trf!("{} verschiedene Champions · die Top 3 machen {:.0} % deiner Spiele aus", "{} different champions · the top 3 make up {:.0} % of your games", p.distinct, p.top3 * 100.0))
                         .color(theme::MUTED),
                 );
                 if p.games < POOL_MIN_GAMES {
-                    ui.label(RichText::new(format!("Noch zu wenige Daten (< {POOL_MIN_GAMES} Spiele) für eine Pool-Bewertung.")).color(theme::MUTED));
+                    ui.label(RichText::new(trf!("Noch zu wenige Daten (< {POOL_MIN_GAMES} Spiele) für eine Pool-Bewertung.", "Not enough data yet (< {POOL_MIN_GAMES} games) to rate your pool.")).color(theme::MUTED));
                 } else if p.top3 < POOL_FOCUS {
-                    ui.label(RichText::new(format!(
-                        "Pool zu breit für einen effizienten Climb: Deine Top 3 machen unter {:.0} % aus. Weniger Champions = mehr Matchup-Erfahrung.",
+                    ui.label(RichText::new(trf!(
+                        "Pool zu breit für einen effizienten Climb: Deine Top 3 machen unter {:.0} % aus. Weniger Champions = mehr Matchup-Erfahrung.", "Pool too wide for an efficient climb: your top 3 make up less than {:.0} %. Fewer champions = more matchup experience.",
                         POOL_FOCUS * 100.0
                     ))
                     .color(GOLD));
                 }
                 wide(ui, "pool_scroll", |ui| {
                     egui::Grid::new("pool").striped(true).show(ui, |ui| {
-                        let head: &[&str] = if ex { &["Champion", "Spiele", "Anteil", "WR", "KDA", "CS/min"] } else { &["Champion", "Spiele", "WR"] };
+                        let head: &[&str] = if ex { &["Champion", tr!("Spiele", "Games"), tr!("Anteil", "Share"), "WR", "KDA", "CS/min"] } else { &["Champion", tr!("Spiele", "Games"), "WR"] };
                         for h in head {
                             ui.label(RichText::new(*h).weak());
                         }
@@ -1455,9 +1469,9 @@ impl App {
             ui.add_space(10.0);
 
             // Beste Picks gegen einen bestimmten Gegner-Champion
-            sub_title(ui, "Beste Picks gegen …");
+            sub_title(ui, tr!("Beste Picks gegen …", "Best picks vs …"));
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut self.pick_search).hint_text("Gegner-Champion").desired_width(180.0));
+                ui.add(egui::TextEdit::singleline(&mut self.pick_search).hint_text(tr!("Gegner-Champion", "Enemy champion")).desired_width(180.0));
                 let q = self.pick_search.trim().to_lowercase();
                 if !q.is_empty() {
                     let mut hits: Vec<(i32, String)> = self
@@ -1478,10 +1492,10 @@ impl App {
             if self.pick_enemy > 0 {
                 let enemy = self.pick_enemy;
                 let vs = analysis::wr_vs(&self.games, enemy);
-                ui.label(format!(
-                    "Deine Bilanz gegen {}: {}",
+                ui.label(trf!(
+                    "Deine Bilanz gegen {}: {}", "Your record vs {}: {}",
                     self.names.champ(enemy),
-                    if vs.games > 0 { format!("{} Spiele, {} WR", vs.games, pct(&vs)) } else { "noch keine Spiele".into() }
+                    if vs.games > 0 { trf!("{} Spiele, {} WR", "{} games, {} WR", vs.games, pct(&vs)) } else { tr!("noch keine Spiele", "no games yet").into() }
                 ));
                 let recs = analysis::recommend(&self.games, &self.matchups, &[enemy], "");
                 rec_grid(ui, "pick_recs", &recs, &self.names);
@@ -1492,11 +1506,11 @@ impl App {
     /// Coaching: welche einfachen Merkmale gehen bei dir mit Siegen einher.
     fn ui_coaching(&self, ui: &mut egui::Ui) {
         let c = analysis::coaching(&self.games, &self.elo_gpm);
-        help_header(ui, "Coaching: Was entscheidet deine Spiele?", HELP_COACH);
+        help_header(ui, tr!("Coaching: Was entscheidet deine Spiele?", "Coaching: what decides your games?"), crate::i18n::l(HELP_COACH));
         let wr = |x: (usize, usize)| analysis::CoachLine::wr(x).map(|w| format!("{:.0} % ({}/{})", w * 100.0, x.1, x.0)).unwrap_or_else(|| "-".into());
         wide(ui, "coach_scroll", |ui| {
             egui::Grid::new("coach").striped(true).show(ui, |ui| {
-                for h in ["Wenn …", "Siegchance", "sonst", "Unterschied"] {
+                for h in [tr!("Wenn …", "If …"), tr!("Siegchance", "Win rate"), tr!("sonst", "otherwise"), tr!("Unterschied", "Difference")] {
                     ui.label(RichText::new(h).small().color(theme::MUTED));
                 }
                 ui.end_row();
@@ -1505,8 +1519,8 @@ impl App {
                     ui.label(wr(l.with));
                     ui.label(wr(l.without));
                     match l.gap() {
-                        Some(g) => ui.label(RichText::new(format!("{g:+.0} Pkt.")).strong().color(if g >= 10.0 { WIN } else if g <= -10.0 { LOSS } else { theme::TEXT })),
-                        None => ui.label(RichText::new(format!("ab {} Spielen je Seite", analysis::COACH_MIN)).color(theme::MUTED)),
+                        Some(g) => ui.label(RichText::new(trf!("{g:+.0} Pkt.", "{g:+.0} pts")).strong().color(if g >= 10.0 { WIN } else if g <= -10.0 { LOSS } else { theme::TEXT })),
+                        None => ui.label(RichText::new(trf!("ab {} Spielen je Seite", "from {} games per side", analysis::COACH_MIN)).color(theme::MUTED)),
                     };
                     ui.end_row();
                 }
@@ -1514,27 +1528,27 @@ impl App {
         });
         // größter belegter Hebel als Klartext
         if let Some((l, g)) = c.lines.iter().filter_map(|l| Some((l, l.gap()?))).max_by(|a, b| a.1.total_cmp(&b.1)).filter(|x| x.1 >= 10.0) {
-            ui.label(RichText::new(format!("Größter Hebel bisher: {} – damit gewinnst du {g:.0} Prozentpunkte öfter.", l.label)).color(GOLD));
+            ui.label(RichText::new(trf!("Größter Hebel bisher: {} – damit gewinnst du {g:.0} Prozentpunkte öfter.", "Biggest lever so far: {} – with it you win {g:.0} percentage points more often.", l.label)).color(GOLD));
         }
         ui.add_space(4.0);
         if c.lead_games > 0 {
-            let shrink = c.lead_shrinks.map(|s| format!(" · In {:.0} % der Spiele mit Vorsprung bei 10 min schrumpft er bis Minute 15.", s * 100.0)).unwrap_or_default();
-            ui.label(format!(
-                "CS gegen deinen Lane-Gegner: Ø {:+.1} bei 10 min → {:+.1} bei 15 min ({} Spiele){shrink}",
+            let shrink = c.lead_shrinks.map(|s| trf!(" · In {:.0} % der Spiele mit Vorsprung bei 10 min schrumpft er bis Minute 15.", " · In {:.0} % of games with a lead at 10 min it shrinks by minute 15.", s * 100.0)).unwrap_or_default();
+            ui.label(trf!(
+                "CS gegen deinen Lane-Gegner: Ø {:+.1} bei 10 min → {:+.1} bei 15 min ({} Spiele){shrink}", "CS vs your lane opponent: avg {:+.1} at 10 min → {:+.1} at 15 min ({} games){shrink}",
                 c.lead10, c.lead15, c.lead_games
             ));
         }
         if let Some(avg) = c.early_avg {
-            let list = |v: &[(i32, f64, usize)]| v.iter().map(|(k, a, n)| format!("{} Ø {a:.1} ({n})", self.names.champ(*k))).collect::<Vec<_>>().join(", ");
-            let mut txt = format!("Tode vor Minute 10: Ø {avg:.1} pro Spiel");
+            let list = |v: &[(i32, f64, usize)]| v.iter().map(|(k, a, n)| trf!("{} Ø {a:.1} ({n})", "{} avg {a:.1} ({n})", self.names.champ(*k))).collect::<Vec<_>>().join(", ");
+            let mut txt = trf!("Tode vor Minute 10: Ø {avg:.1} pro Spiel", "Deaths before minute 10: avg {avg:.1} per game");
             if !c.early_by_champ.is_empty() {
-                txt += &format!(" · am meisten mit {}", list(&c.early_by_champ));
+                txt += &trf!(" · am meisten mit {}", " · most with {}", list(&c.early_by_champ));
             }
             if !c.early_by_opp.is_empty() {
-                txt += &format!(" · gegen {}", list(&c.early_by_opp));
+                txt += &trf!(" · gegen {}", " · vs {}", list(&c.early_by_opp));
             }
-            ui.label(txt).on_hover_text(format!(
-                "Nur Spiele mit Timeline; Champions und Lane-Gegner ab {} Spielen, die drei höchsten Werte. In Klammern: Spiele.",
+            ui.label(txt).on_hover_text(trf!(
+                "Nur Spiele mit Timeline; Champions und Lane-Gegner ab {} Spielen, die drei höchsten Werte. In Klammern: Spiele.", "Only games with timeline; champions and lane opponents from {} games, the three highest values. In brackets: games.",
                 analysis::EARLY_MIN_GAMES
             ));
         }
@@ -1543,22 +1557,22 @@ impl App {
             .iter()
             .zip(["1.", "2.", "3.", "4.+"])
             .filter(|(x, _)| x.0 > 0)
-            .map(|(x, n)| format!("{n} Spiel {}", wr(*x)))
+            .map(|(x, n)| trf!("{n} Spiel {}", "{n} game {}", wr(*x)))
             .collect();
         if !parts.is_empty() {
-            ui.label(format!("Siegchance nach Spielnummer in einer Session (Pause unter 2 h): {}", parts.join(" · ")))
-                .on_hover_text("Fällt die Siegchance ab dem 3. oder 4. Spiel deutlich, lohnt es sich, Sessions kürzer zu halten.");
+            ui.label(trf!("Siegchance nach Spielnummer in einer Session (Pause unter 2 h): {}", "Win rate by game number in a session (break under 2 h): {}", parts.join(" · ")))
+                .on_hover_text(tr!("Fällt die Siegchance ab dem 3. oder 4. Spiel deutlich, lohnt es sich, Sessions kürzer zu halten.", "If your win rate drops clearly from the 3rd or 4th game, keep sessions shorter."));
         }
         if c.vision_games >= analysis::COACH_MIN {
             let (lo, hi) = (c.mid_deaths_low_vision, c.mid_deaths_high_vision);
-            let note = if lo > hi + 0.3 { " – mehr Vision, weniger Midgame-Tode" } else { " – kein klarer Zusammenhang" };
-            ui.label(format!(
-                "Tode im Midgame (14–25 min): Ø {lo:.1} in Spielen mit wenig Vision, Ø {hi:.1} mit viel Vision ({} Spiele){note}",
+            let note = if lo > hi + 0.3 { tr!(" – mehr Vision, weniger Midgame-Tode", " – more vision, fewer midgame deaths") } else { tr!(" – kein klarer Zusammenhang", " – no clear link") };
+            ui.label(trf!(
+                "Tode im Midgame (14–25 min): Ø {lo:.1} in Spielen mit wenig Vision, Ø {hi:.1} mit viel Vision ({} Spiele){note}", "Midgame deaths (14–25 min): avg {lo:.1} in games with little vision, avg {hi:.1} with a lot of vision ({} games){note}",
                 c.vision_games
             ));
         } else {
             ui.label(
-                RichText::new(format!("Vision gegen Midgame-Tode: ab {} Spielen mit Timeline (bisher {}).", analysis::COACH_MIN, c.vision_games))
+                RichText::new(trf!("Vision gegen Midgame-Tode: ab {} Spielen mit Timeline (bisher {}).", "Vision vs midgame deaths: from {} games with timeline (so far {}).", analysis::COACH_MIN, c.vision_games))
                     .color(theme::MUTED),
             );
         }
@@ -1566,19 +1580,19 @@ impl App {
 
     fn ui_records(&self, ui: &mut egui::Ui) {
         let r = &self.records;
-        ui.label(RichText::new("Rekorde & Allzeit-Hochs").strong());
+        ui.label(RichText::new(tr!("Rekorde & Allzeit-Hochs", "Records & all-time highs")).strong());
         let s = &r.season;
         let rank = |v: Option<i32>| v.map(div_label).unwrap_or_else(|| "-".into());
-        ui.label(format!(
-            "Peak diese Saison: {} · Vorsaison: Peak {}, Ende {}",
+        ui.label(trf!(
+            "Peak diese Saison: {} · Vorsaison: Peak {}, Ende {}", "Peak this season: {} · last season: peak {}, end {}",
             rank(s.high),
             rank(s.prev_high),
             rank(s.prev_end)
         ));
         if let Some((v, ts)) = r.peak {
-            ui.label(format!("Höchster Stand seit lolstats läuft: {} ({})", value_label(v), ago(ts)));
+            ui.label(trf!("Höchster Stand seit lolstats läuft: {} ({})", "Highest rank since lolstats is running: {} ({})", value_label(v), ago(ts)));
         }
-        ui.label(format!("Längste Siegesserie: {} · längste Niederlagenserie: {}", r.win_streak, r.loss_streak));
+        ui.label(trf!("Längste Siegesserie: {} · längste Niederlagenserie: {}", "Longest win streak: {} · longest loss streak: {}", r.win_streak, r.loss_streak));
         let line = |ui: &mut egui::Ui, label: &str, b: &Option<Best>, fmt: &dyn Fn(f64) -> String| {
             ui.label(label);
             match b {
@@ -1596,20 +1610,20 @@ impl App {
             ui.end_row();
         };
         egui::Grid::new("records").striped(true).show(ui, |ui| {
-            line(ui, "Meiste Kills", &r.kills, &|v| format!("{v:.0}"));
-            line(ui, "Beste KDA", &r.kda, &|v| format!("{v:.2}"));
-            line(ui, "Meiste CS", &r.cs, &|v| format!("{v:.0}"));
-            line(ui, "Beste CS/min (ab 15 min)", &r.csm, &|v| format!("{v:.1}"));
-            line(ui, "Meister Schaden", &r.dmg, &|v| format!("{v:.0}"));
-            line(ui, "Höchster Vision Score", &r.vision, &|v| format!("{v:.0}"));
-            line(ui, "Längste Killing-Spree", &r.spree, &|v| format!("{v:.0}"));
+            line(ui, tr!("Meiste Kills", "Most kills"), &r.kills, &|v| format!("{v:.0}"));
+            line(ui, tr!("Beste KDA", "Best KDA"), &r.kda, &|v| format!("{v:.2}"));
+            line(ui, tr!("Meiste CS", "Most CS"), &r.cs, &|v| format!("{v:.0}"));
+            line(ui, tr!("Beste CS/min (ab 15 min)", "Best CS/min (from 15 min)"), &r.csm, &|v| format!("{v:.1}"));
+            line(ui, tr!("Meister Schaden", "Most damage"), &r.dmg, &|v| format!("{v:.0}"));
+            line(ui, tr!("Höchster Vision Score", "Highest vision score"), &r.vision, &|v| format!("{v:.0}"));
+            line(ui, tr!("Längste Killing-Spree", "Longest killing spree"), &r.spree, &|v| format!("{v:.0}"));
         });
-        ui.label(format!(
-            "Multi-Kills: {} Double · {} Triple · {} Quadra · {} Penta · First Bloods: {}",
+        ui.label(trf!(
+            "Multi-Kills: {} Double · {} Triple · {} Quadra · {} Penta · First Bloods: {}", "Multi-kills: {} double · {} triple · {} quadra · {} penta · first bloods: {}",
             r.doubles, r.triples, r.quadras, r.pentas, r.first_bloods
         ));
         ui.label(
-            RichText::new("Multi-Kills, Vision und Spree zählen ab Datenversion 2 (ältere Spiele werden im Hintergrund nachgeladen).")
+            RichText::new(tr!("Multi-Kills, Vision und Spree zählen ab Datenversion 2 (ältere Spiele werden im Hintergrund nachgeladen).", "Multi-kills, vision and sprees count from data version 2 (older games are reloaded in the background)."))
                 .small()
                 .weak(),
         );
@@ -1617,13 +1631,13 @@ impl App {
 
     fn ui_farm(&self, ui: &mut egui::Ui) {
         let f = &self.farm;
-        ui.label(RichText::new(format!("Farmen im Detail (letzte {} Spiele)", f.games)).strong());
+        ui.label(RichText::new(trf!("Farmen im Detail (letzte {} Spiele)", "Farming in detail (last {} games)", f.games)).strong());
         let o = |v: Option<f64>, d: usize| v.map(|x| format!("{x:.d$}")).unwrap_or_else(|| "-".into());
-        ui.label(format!("CS pro Minute: Lane {} · Jungle {}", o(f.lane_csm, 1), o(f.jungle_csm, 1)));
-        ui.label(format!("Ø CS nach 10 / 15 / 20 min: {} / {} / {}", o(f.cs10, 0), o(f.cs15, 0), o(f.cs20, 0)));
+        ui.label(trf!("CS pro Minute: Lane {} · Jungle {}", "CS per minute: lane {} · jungle {}", o(f.lane_csm, 1), o(f.jungle_csm, 1)));
+        ui.label(trf!("Ø CS nach 10 / 15 / 20 min: {} / {} / {}", "Avg CS at 10 / 15 / 20 min: {} / {} / {}", o(f.cs10, 0), o(f.cs15, 0), o(f.cs20, 0)));
         let signed = |v: Option<f64>| v.map(|x| format!("{x:+.1}")).unwrap_or_else(|| "-".into());
-        let txt = format!(
-            "CS-Differenz zum direkten Lane-Gegner: {} nach 10 min · {} nach 15 min ({} Spiele)",
+        let txt = trf!(
+            "CS-Differenz zum direkten Lane-Gegner: {} nach 10 min · {} nach 15 min ({} Spiele)", "CS difference to your direct lane opponent: {} at 10 min · {} at 15 min ({} games)",
             signed(f.diff10),
             signed(f.diff15),
             f.diff_games
@@ -1637,29 +1651,29 @@ impl App {
     }
 
     fn ui_style(&self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Spielstil-Profil").strong());
+        ui.label(RichText::new(tr!("Spielstil-Profil", "Playstyle profile")).strong());
         let Some(s) = &self.style else {
-            ui.label(RichText::new("Noch zu wenige vollständige Spiele (Datenversion 2). Wird im Hintergrund nachgeladen.").weak());
+            ui.label(RichText::new(tr!("Noch zu wenige vollständige Spiele (Datenversion 2). Wird im Hintergrund nachgeladen.", "Not enough complete games yet (data version 2). Loading in the background.")).weak());
             return;
         };
         ui.label(
-            RichText::new(format!(
-                "Position {} · {} deiner Spiele · Vergleich mit {} Spielern {}",
+            RichText::new(trf!(
+                "Position {} · {} deiner Spiele · Vergleich mit {} Spielern {}", "Position {} · {} of your games · compared with {} players {}",
                 position_label(s.position),
                 s.games,
                 s.peers,
-                if s.near_elo { "deiner Elo (±1 Tier)" } else { "aller Elos (für deine Elo noch zu wenige)" }
+                if s.near_elo { tr!("deiner Elo (±1 Tier)", "in your elo (±1 tier)") } else { tr!("aller Elos (für deine Elo noch zu wenige)", "of all elos (not enough yet for your elo)") }
             ))
             .weak(),
         );
         egui::Grid::new("style").striped(true).show(ui, |ui| {
-            for h in ["", "Du", "Vergleich", "Unterschied"] {
+            for h in ["", tr!("Du", "You"), tr!("Vergleich", "Comparison"), tr!("Unterschied", "Difference")] {
                 ui.label(RichText::new(h).weak());
             }
             ui.end_row();
             for (i, (label, is_pct, higher_better)) in STYLE_LABELS.iter().enumerate() {
                 let fmt = |v: f64| if *is_pct { format!("{:.0} %", v * 100.0) } else { format!("{v:.2}") };
-                ui.label(*label);
+                ui.label(tx(label));
                 ui.label(fmt(s.mine[i]));
                 match s.peer {
                     Some(p) if p[i].abs() > 1e-9 => {
@@ -1683,7 +1697,7 @@ impl App {
         let all: Vec<i32> = self.snaps.iter().filter_map(|s| s.rank.value()).collect();
         let vals = &all[all.len().saturating_sub(80)..];
         if vals.len() < 2 {
-            ui.label(RichText::new("Noch zu wenig Datenpunkte für den LP-Verlauf.").weak());
+            ui.label(RichText::new(tr!("Noch zu wenig Datenpunkte für den LP-Verlauf.", "Not enough data points for the LP history yet.")).weak());
             return;
         }
         let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 150.0), Sense::hover());
@@ -1711,19 +1725,19 @@ impl App {
 
     fn ui_me(&self, ui: &mut egui::Ui) {
         let Some(me) = &self.me else {
-            ui.label("Noch keine Daten. Starte den League-Client, dann liest lolstats dein Profil automatisch ein.");
+            ui.label(tr!("Noch keine Daten. Starte den League-Client, dann liest lolstats dein Profil automatisch ein.", "No data yet. Start the League client and lolstats reads your profile automatically."));
             return;
         };
         self.scroll().show(ui, |ui| {
             let ex = self.cfg.expert;
-            theme::page_header(ui, &me.name, "Dein Profil");
+            theme::page_header(ui, &me.name, tr!("Dein Profil", "Your profile"));
             // Kernaussagen als Kacheln
             ui.horizontal_wrapped(|ui| {
                 if let Some(s) = self.snaps.last() {
                     let sub = if s.rank.games() > 0 {
-                        format!("{}S {}N · {:.0} % Winrate", s.rank.wins, s.rank.losses, s.rank.wins as f64 * 100.0 / s.rank.games() as f64)
+                        trf!("{}S {}N · {:.0} % Winrate", "{}W {}L · {:.0} % win rate", s.rank.wins, s.rank.losses, s.rank.wins as f64 * 100.0 / s.rank.games() as f64)
                     } else {
-                        "noch keine Spiele".into()
+                        tr!("noch keine Spiele", "no games yet").into()
                     };
                     theme::tile(ui, "Solo/Duo", &s.rank.label(), tier_color(&s.rank.tier), &sub);
                 }
@@ -1735,18 +1749,18 @@ impl App {
             theme::section(ui, |ui| self.ui_elo_pick(ui));
             ui.add_space(8.0);
             theme::section(ui, |ui| {
-                sub_title(ui, "LP-Verlauf");
+                sub_title(ui, tr!("LP-Verlauf", "LP history"));
                 self.ui_lp_chart(ui);
                 if ex {
-                    ui.label(RichText::new("Alle Messpunkte, Diagramme und Auswertungen: Tab \"Labor\".").small().color(theme::MUTED));
+                    ui.label(RichText::new(tr!("Alle Messpunkte, Diagramme und Auswertungen: Tab \"Labor\".", "All data points, charts and analyses: \"Lab\" tab.")).small().color(theme::MUTED));
                 }
             });
             ui.add_space(10.0);
             let (n_champs, n_games) = if ex { (25, 25) } else { (5, 10) };
             let champs = |ui: &mut egui::Ui, icons: &Icons| {
-                ui.label(RichText::new(if ex { "Deine Champions (Summoner's Rift)" } else { "Deine Top-Champions" }).font(FontId::new(15.0, theme::bold())).color(Color32::WHITE));
+                ui.label(RichText::new(if ex { tr!("Deine Champions (Summoner's Rift)", "Your champions (Summoner's Rift)") } else { tr!("Deine Top-Champions", "Your top champions") }).font(FontId::new(15.0, theme::bold())).color(Color32::WHITE));
                 egui::Grid::new("mychamps").striped(true).show(ui, |ui| {
-                    let head: &[&str] = if ex { &["Champion", "Spiele", "WR", "KDA", "CS/min"] } else { &["Champion", "Spiele", "WR"] };
+                    let head: &[&str] = if ex { &["Champion", tr!("Spiele", "Games"), "WR", "KDA", "CS/min"] } else { &["Champion", tr!("Spiele", "Games"), "WR"] };
                     for h in head {
                         ui.label(RichText::new(*h).weak());
                     }
@@ -1767,7 +1781,7 @@ impl App {
                 });
             };
             let recent = |ui: &mut egui::Ui, icons: &Icons| {
-                ui.label(RichText::new(if ex { "Letzte Spiele" } else { "Letzte 10 Spiele" }).font(FontId::new(15.0, theme::bold())).color(Color32::WHITE));
+                ui.label(RichText::new(if ex { tr!("Letzte Spiele", "Recent games") } else { tr!("Letzte 10 Spiele", "Last 10 games") }).font(FontId::new(15.0, theme::bold())).color(Color32::WHITE));
                 egui::Grid::new("recent").striped(true).show(ui, |ui| {
                     for &i in self.my_games.iter().take(n_games) {
                         let m = &self.matches[i];
@@ -1775,9 +1789,9 @@ impl App {
                         let (t, c) = if m.remake() {
                             ("R", Color32::GRAY)
                         } else if p.win {
-                            ("S", WIN)
+                            (tr!("S", "W"), WIN)
                         } else {
-                            ("N", LOSS)
+                            (tr!("N", "L"), LOSS)
                         };
                         ui.label(RichText::new(t).strong().color(c));
                         ui.horizontal(|ui| {
@@ -1813,43 +1827,43 @@ impl App {
     /// Bester Pick für die eigene Elo auf der Hauptposition, darunter bis zu 4 Alternativen.
     fn ui_elo_pick(&self, ui: &mut egui::Ui) {
         let ep = &self.elo_picks;
-        let pos = if ep.position.is_empty() { "deiner Position".to_string() } else { position_label(ep.position).to_string() };
-        let help = "Aus allen gesammelten Matches nahe deiner Elo: geschätzte Winrate der anderen Spieler mit dem Champion \
+        let pos = if ep.position.is_empty() { tr!("deiner Position", "your position").to_string() } else { position_label(ep.position).to_string() };
+        let help = tr!("Aus allen gesammelten Matches nahe deiner Elo: geschätzte Winrate der anderen Spieler mit dem Champion \
                     auf deiner Hauptposition (60 %) plus deine eigene Winrate darauf (40 %).\n\
                     Elo-Fenster: ±1 Tier, bei weniger als 50 Spielen auf der Position ±2 Tiers, danach alle Elos.\n\
                     Bei wenigen Spielen im Fenster wird die Winrate zur Winrate des Champions in den anderen Elos gezogen, \
                     damit z. B. 4 Siege aus 5 Spielen nicht als 80 % gelten (markiert als \"wenig Daten\").\n\
                     Kandidaten: mind. 5 Spiele im Fenster, oder mind. 20 über alle Elos, oder mind. 3 eigene Spiele. \
-                    Als Pick zählt, wer geschätzt mind. 50 % gewinnt oder bei dir selbst klar stark ist.";
-        help_header(ui, &format!("Bester Pick für deine Elo · {pos}"), help);
+                    Als Pick zählt, wer geschätzt mind. 50 % gewinnt oder bei dir selbst klar stark ist.", "From all collected matches near your elo: estimated win rate of other players with the champion on your main position (60 %) plus your own win rate on it (40 %).\nElo window: ±1 tier, with fewer than 50 games on the position ±2 tiers, then all elos.\nWith few games in the window the win rate is pulled towards the champion's win rate in other elos, so that e.g. 4 wins from 5 games don't count as 80 % (marked as \"little data\").\nCandidates: at least 5 games in the window, or at least 20 across all elos, or at least 3 own games. A pick counts if it is estimated to win at least 50 % or is clearly strong for you.");
+        help_header(ui, &trf!("Bester Pick für deine Elo · {pos}", "Best pick for your elo · {pos}"), help);
         let Some(best) = ep.picks.first() else {
             ui.label(
-                RichText::new(format!(
+                RichText::new(trf!(
                     "In deiner Elo gibt es auf {pos} noch keinen Champion mit genug Spielen und positiver Winrate \
-                     ({} Matches gesammelt). lolstats sammelt automatisch weiter über deine Lobbys.",
+                     ({} Matches gesammelt). lolstats sammelt automatisch weiter über deine Lobbys.", "In your elo there is no champion on {pos} with enough games and a positive win rate yet ({} matches collected). lolstats keeps collecting through your lobbies.",
                     ep.matches
                 ))
                 .color(theme::MUTED),
             );
             if let Some((c, a)) = &ep.own_best {
                 ui.add_space(6.0);
-                ui.label(RichText::new("Bis dahin aus deinen eigenen Spielen:").small().color(theme::MUTED));
+                ui.label(RichText::new(tr!("Bis dahin aus deinen eigenen Spielen:", "Until then from your own games:")).small().color(theme::MUTED));
                 ui.horizontal(|ui| {
                     icons::show(ui, &self.icons, Kind::Champ, *c, 40.0);
                     ui.vertical(|ui| {
                         ui.label(RichText::new(self.names.champ(*c)).font(FontId::new(18.0, theme::bold())).color(Color32::WHITE));
-                        ui.label(wr_text(a.wins, a.games, format!("du: {} Winrate in {} Spielen auf {pos}", pct(a), a.games)));
+                        ui.label(wr_text(a.wins, a.games, trf!("du: {} Winrate in {} Spielen auf {pos}", "you: {} win rate in {} games on {pos}", pct(a), a.games)));
                     });
                 });
             }
             return;
         };
         let scope = match ep.span {
-            Some(s) if s <= 400 => "nahe deiner Elo (±1 Tier)",
-            Some(_) => "nahe deiner Elo (±2 Tiers, für ±1 noch zu wenige)",
-            None => "aus allen Elos (für deine Elo noch zu wenige)",
+            Some(s) if s <= 400 => tr!("nahe deiner Elo (±1 Tier)", "near your elo (±1 tier)"),
+            Some(_) => tr!("nahe deiner Elo (±2 Tiers, für ±1 noch zu wenige)", "near your elo (±2 tiers, not enough for ±1 yet)"),
+            None => tr!("aus allen Elos (für deine Elo noch zu wenige)", "from all elos (not enough yet for your elo)"),
         };
-        let mine = |a: &Agg| if a.games > 0 { format!("du: {} Sp. · {}", a.games, pct(a)) } else { "von dir noch nicht gespielt".into() };
+        let mine = |a: &Agg| if a.games > 0 { trf!("du: {} Sp. · {}", "you: {} g · {}", a.games, pct(a)) } else { tr!("von dir noch nicht gespielt", "not played by you yet").into() };
         ui.horizontal(|ui| {
             icons::show(ui, &self.icons, Kind::Champ, best.champ, 48.0);
             ui.vertical(|ui| {
@@ -1857,14 +1871,14 @@ impl App {
                 ui.label(wr_text(
                     (best.wr * 100.0).round() as i32,
                     100,
-                    format!("~{:.0} % Winrate {scope} ({} Spiele, gemessen {})", best.wr * 100.0, best.elo.games, pct(&best.elo)),
+                    trf!("~{:.0} % Winrate {scope} ({} Spiele, gemessen {})", "~{:.0} % win rate {scope} ({} games, measured {})", best.wr * 100.0, best.elo.games, pct(&best.elo)),
                 ));
                 if best.thin() {
                     let out = Agg { games: best.all.games - best.elo.games, wins: best.all.wins - best.elo.wins };
                     let txt = if out.games > 0 {
-                        format!("wenig Daten: ergänzt um {} Spiele aus anderen Elos ({})", out.games, pct(&out))
+                        trf!("wenig Daten: ergänzt um {} Spiele aus anderen Elos ({})", "little data: supplemented with {} games from other elos ({})", out.games, pct(&out))
                     } else {
-                        "wenig Daten: noch wenige Spiele, Schätzung zur Mitte gezogen".to_string()
+                        tr!("wenig Daten: noch wenige Spiele, Schätzung zur Mitte gezogen", "little data: few games so far, estimate pulled towards the middle").to_string()
                     };
                     ui.label(RichText::new(txt).small().color(GOLD));
                 }
@@ -1873,15 +1887,15 @@ impl App {
         });
         if ep.picks.len() > 1 {
             ui.add_space(6.0);
-            ui.label(RichText::new("Alternativen").small().color(theme::MUTED));
+            ui.label(RichText::new(tr!("Alternativen", "Alternatives")).small().color(theme::MUTED));
             ui.horizontal_wrapped(|ui| {
                 for p in &ep.picks[1..] {
                     ui.horizontal(|ui| {
                         icons::show(ui, &self.icons, Kind::Champ, p.champ, 22.0);
                         ui.label(self.names.champ(p.champ));
-                        let thin = if p.thin() { " · wenig Daten" } else { "" };
-                        ui.label(wr_text((p.wr * 100.0).round() as i32, 100, format!("~{:.0} %", p.wr * 100.0))).on_hover_text(format!(
-                            "{} Spiele {scope}, gemessen {}{thin} · {}",
+                        let thin = if p.thin() { tr!(" · wenig Daten", " · little data") } else { "" };
+                        ui.label(wr_text((p.wr * 100.0).round() as i32, 100, format!("~{:.0} %", p.wr * 100.0))).on_hover_text(trf!(
+                            "{} Spiele {scope}, gemessen {}{thin} · {}", "{} games {scope}, measured {}{thin} · {}",
                             p.elo.games,
                             pct(&p.elo),
                             mine(&p.mine)
@@ -1898,13 +1912,13 @@ impl App {
         // Champion-Liste wächst bei breitem Fenster etwas mit (Namen werden nicht abgeschnitten)
         let list_w = (ui.available_width() * 0.2).clamp(190.0, 260.0);
         egui::SidePanel::left("champlist").resizable(false).exact_width(list_w).frame(list_frame).show_inside(ui, |ui| {
-            ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("🔍 Champion suchen").desired_width(f32::INFINITY));
+            ui.add(egui::TextEdit::singleline(&mut self.search).hint_text(tr!("🔍 Champion suchen", "🔍 Search champion")).desired_width(f32::INFINITY));
             let tagged = self.matches.iter().filter(|m| m.elo.is_some()).count();
             let mut clicked = None;
             if ui
-                .checkbox(&mut self.build_near_elo, "nur nahe meiner Elo")
-                .on_hover_text(format!(
-                    "Nur Matches, die über Spieler innerhalb von ±1 Tier um deinen Rang gesammelt wurden. Bisher {tagged} von {} Matches mit Elo.",
+                .checkbox(&mut self.build_near_elo, tr!("nur nahe meiner Elo", "only near my elo"))
+                .on_hover_text(trf!(
+                    "Nur Matches, die über Spieler innerhalb von ±1 Tier um deinen Rang gesammelt wurden. Bisher {tagged} von {} Matches mit Elo.", "Only matches collected through players within ±1 tier of your rank. So far {tagged} of {} matches with elo.",
                     self.matches.len()
                 ))
                 .changed()
@@ -1939,8 +1953,8 @@ impl App {
         }
         let Some(b) = &self.build else {
             ui.add_space(44.0); // nicht unter den Aktualisieren-Knopf
-            ui.label(format!(
-                "Champion links auswählen. Datenbasis: {} Spiele, gesammelt aus deinen Matches und denen deiner Lobby-Mitspieler.",
+            ui.label(trf!(
+                "Champion links auswählen. Datenbasis: {} Spiele, gesammelt aus deinen Matches und denen deiner Lobby-Mitspieler.", "Select a champion on the left. Data: {} games, collected from your matches and those of your lobby mates.",
                 self.matches.len()
             ));
             return;
@@ -1955,19 +1969,19 @@ impl App {
                 icons::show(ui, icons, Kind::Champ, b.champ, 52.0);
                 ui.vertical(|ui| {
                     ui.label(RichText::new(names.champ(b.champ)).font(FontId::new(24.0, theme::bold())).color(Color32::WHITE));
-                    let scope = if self.build_near_elo { " · nahe deiner Elo" } else { "" };
-                    ui.label(RichText::new(format!("{}{scope} · {} Spiele", b.patch, b.total.games)).color(theme::MUTED));
+                    let scope = if self.build_near_elo { tr!(" · nahe deiner Elo", " · near your elo") } else { "" };
+                    ui.label(RichText::new(trf!("{}{scope} · {} Spiele", "{}{scope} · {} games", b.patch, b.total.games)).color(theme::MUTED));
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.vertical(|ui| {
-                        ui.label(RichText::new("Winrate").small().color(theme::MUTED));
+                        ui.label(RichText::new(tr!("Winrate", "Win rate")).small().color(theme::MUTED));
                         ui.label(wr_text(b.total.wins, b.total.games, pct(&b.total)).font(FontId::new(20.0, theme::bold())));
                     });
                 });
             });
             ui.add_space(10.0);
             theme::section(ui, |ui| {
-                sub_title(ui, "Runen");
+                sub_title(ui, tr!("Runen", "Runes"));
                 match (&b.page, &rune_lines) {
                     (Some((pg, agg)), Some(lines)) => {
                         for (i, (style, perks)) in lines.iter().enumerate() {
@@ -1985,14 +1999,14 @@ impl App {
                         }
                         ui.add_space(4.0);
                         ui.horizontal_wrapped(|ui| {
-                            if ui.button("In den Client importieren").clicked() {
+                            if ui.button(tr!("In den Client importieren", "Import into client")).clicked() {
                                 import = Some(pg.clone());
                             }
-                            ui.label(RichText::new(format!("{} Spiele · {} WR", agg.games, pct(agg))).color(theme::MUTED));
+                            ui.label(RichText::new(trf!("{} Spiele · {} WR", "{} games · {} WR", agg.games, pct(agg))).color(theme::MUTED));
                         });
                     }
                     _ => {
-                        ui.label(RichText::new("Keine Runendaten.").color(theme::MUTED));
+                        ui.label(RichText::new(tr!("Keine Runendaten.", "No rune data.")).color(theme::MUTED));
                     }
                 }
                 if !msg.is_empty() {
@@ -2002,24 +2016,24 @@ impl App {
             if let Some((sp, agg)) = &b.spells {
                 ui.add_space(8.0);
                 theme::section(ui, |ui| {
-                    sub_title(ui, "Beschwörerzauber");
+                    sub_title(ui, tr!("Beschwörerzauber", "Summoner spells"));
                     ui.horizontal_wrapped(|ui| {
                         chip(ui, &names.spell(sp[0]));
                         chip(ui, &names.spell(sp[1]));
-                        ui.label(RichText::new(format!("{} Spiele · {}", agg.games, pct(agg))).color(theme::MUTED));
+                        ui.label(RichText::new(trf!("{} Spiele · {}", "{} games · {}", agg.games, pct(agg))).color(theme::MUTED));
                     });
                 });
             }
             ui.add_space(8.0);
             theme::section(ui, |ui| {
                 if let Some((id, agg)) = &b.boots {
-                    sub_title(ui, "Schuhe");
+                    sub_title(ui, tr!("Schuhe", "Boots"));
                     item_row(ui, icons, *id, &names.item(*id), agg.games as f32 / b.total.games.max(1) as f32, agg);
                     ui.add_space(6.0);
                 }
-                sub_title(ui, "Häufigste fertige Items");
+                sub_title(ui, tr!("Häufigste fertige Items", "Most common finished items"));
                 if b.items.is_empty() {
-                    ui.label(RichText::new("Noch keine Item-Daten.").color(theme::MUTED));
+                    ui.label(RichText::new(tr!("Noch keine Item-Daten.", "No item data yet.")).color(theme::MUTED));
                 }
                 for (id, agg) in &b.items {
                     let rate = agg.games as f32 / b.total.games.max(1) as f32;
@@ -2031,10 +2045,10 @@ impl App {
             let name = format!("lolstats {}", self.names.champ(self.sel_champ));
             self.msg = match Lcu::connect(&self.cfg.client_dir) {
                 Some(l) => match lcu::import_runes(&l, &pg, &name) {
-                    Ok(()) => "Runenseite angelegt.".into(),
-                    Err(e) => format!("Fehler: {e}"),
+                    Ok(()) => tr!("Runenseite angelegt.", "Rune page created.").into(),
+                    Err(e) => trf!("Fehler: {e}", "Error: {e}"),
                 },
-                None => "League-Client läuft nicht.".into(),
+                None => tr!("League-Client läuft nicht.", "League client is not running.").into(),
             };
         }
     }
@@ -2043,33 +2057,33 @@ impl App {
     fn ui_update(&self, ui: &mut egui::Ui) {
         use crate::update;
         let u = &self.update;
-        sub_title(ui, "Version & Updates");
-        ui.label(format!("Installiert: {}", update::VERSION));
+        sub_title(ui, tr!("Version & Updates", "Version & updates"));
+        ui.label(trf!("Installiert: {}", "Installed: {}", update::VERSION));
         if u.available() {
-            ui.label(RichText::new(format!("Neue Version {} verfügbar", u.latest)).strong().color(GOLD));
+            ui.label(RichText::new(trf!("Neue Version {} verfügbar", "New version {} available", u.latest)).strong().color(GOLD));
             if !u.notes.is_empty() {
                 let notes: String = u.notes.lines().take(8).collect::<Vec<_>>().join("\n");
                 ui.label(RichText::new(notes).color(theme::MUTED));
             }
             ui.horizontal(|ui| {
-                if ui.button("Jetzt installieren").on_hover_text("Lädt die neue Version, prüft die Prüfsumme und startet lolstats neu (ca. 10 s).").clicked() {
+                if ui.button(tr!("Jetzt installieren", "Install now")).on_hover_text(tr!("Lädt die neue Version, prüft die Prüfsumme und startet lolstats neu (ca. 10 s).", "Downloads the new version, checks checksum and signature and restarts lolstats (about 10 s).")).clicked() {
                     if let Ok(exe) = std::env::current_exe() {
                         let _ = std::process::Command::new(exe).arg("apply-update").spawn();
                     }
                 }
-                if !u.page.is_empty() && ui.button("Was ist neu?").clicked() {
+                if !u.page.is_empty() && ui.button(tr!("Was ist neu?", "What's new?")).clicked() {
                     let _ = std::process::Command::new("explorer").arg(&u.page).spawn();
                 }
             });
         } else if u.checked > 0 {
-            ui.label(RichText::new(format!("Du hast die neueste Version · zuletzt geprüft {}", ago(u.checked))).color(theme::MUTED));
+            ui.label(RichText::new(trf!("Du hast die neueste Version · zuletzt geprüft {}", "You have the latest version · last checked {}", ago(u.checked))).color(theme::MUTED));
         } else {
-            ui.label(RichText::new("Noch nicht geprüft – lolstats sieht einmal am Tag nach.").color(theme::MUTED));
+            ui.label(RichText::new(tr!("Noch nicht geprüft – lolstats sieht einmal am Tag nach.", "Not checked yet – lolstats checks once a day.")).color(theme::MUTED));
         }
         if !u.error.is_empty() {
             ui.label(RichText::new(&u.error).color(LOSS));
         }
-        if ui.button("Jetzt nach Updates suchen").clicked() {
+        if ui.button(tr!("Jetzt nach Updates suchen", "Check for updates now")).clicked() {
             // im Hintergrund, damit das Fenster nicht hängt; das Ergebnis kommt über update.json
             let store = Store::open();
             std::thread::spawn(move || {
@@ -2078,13 +2092,13 @@ impl App {
                     Ok(new) => info = new,
                     Err(e) => {
                         info.checked = now_ms();
-                        info.error = format!("Update-Prüfung fehlgeschlagen: {e}");
+                        info.error = trf!("Update-Prüfung fehlgeschlagen: {e}", "Update check failed: {e}");
                     }
                 }
                 store.write(update::UPDATE, &info);
             });
         }
-        ui.label(RichText::new(format!("Updates kommen ausschließlich von github.com/{} und werden per SHA-256 geprüft.", update::REPO)).small().color(theme::MUTED));
+        ui.label(RichText::new(trf!("Updates kommen ausschließlich von github.com/{} und werden per SHA-256 geprüft.", "Updates come only from github.com/{} and are checked via SHA-256 and signature.", update::REPO)).small().color(theme::MUTED));
     }
 
     fn ui_settings(&mut self, ui: &mut egui::Ui) {
@@ -2092,29 +2106,52 @@ impl App {
     }
 
     fn ui_settings_body(&mut self, ui: &mut egui::Ui) {
-        theme::page_header(ui, "Einstellungen", "");
+        theme::page_header(ui, tr!("Einstellungen", "Settings"), "");
         let mut changed = false;
+        let mut lang_changed = false;
         theme::section(ui, |ui| {
-            sub_title(ui, "Ansicht");
+            sub_title(ui, tr!("Ansicht", "View"));
+            // Sprache: Wechsel lädt alles neu, damit auch berechnete Texte in der neuen Sprache entstehen
+            ui.horizontal(|ui| {
+                ui.label(tr!("Sprache", "Language"));
+                let before = self.cfg.lang.clone();
+                egui::ComboBox::from_id_salt("lang")
+                    .selected_text(match self.cfg.lang.as_str() {
+                        "de" => "Deutsch",
+                        "en" => "English",
+                        _ => tr!("Automatisch (Windows)", "Automatic (Windows)"),
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.cfg.lang, String::new(), tr!("Automatisch (Windows)", "Automatic (Windows)"));
+                        ui.selectable_value(&mut self.cfg.lang, "de".to_string(), "Deutsch");
+                        ui.selectable_value(&mut self.cfg.lang, "en".to_string(), "English");
+                    });
+                if self.cfg.lang != before {
+                    crate::i18n::apply(&self.cfg.lang);
+                    lang_changed = true;
+                }
+            });
+            ui.add_space(4.0);
+            changed |= lang_changed;
             changed |= ui
-                .checkbox(&mut self.cfg.expert, "Expertenmodus")
-                .on_hover_text("Zeigt das Labor, alle Tabellen und Diagramme. Aus: nur die Kernaussagen.")
+                .checkbox(&mut self.cfg.expert, tr!("Expertenmodus", "Expert mode"))
+                .on_hover_text(tr!("Zeigt das Labor, alle Tabellen und Diagramme. Aus: nur die Kernaussagen.", "Shows the lab, all tables and charts. Off: only the key points."))
                 .changed();
-            ui.label(RichText::new("Zeigt zusätzlich das Labor und alle Tabellen und Diagramme.").small().color(theme::MUTED));
+            ui.label(RichText::new(tr!("Zeigt zusätzlich das Labor und alle Tabellen und Diagramme.", "Also shows the lab and all tables and charts.")).small().color(theme::MUTED));
             ui.add_space(8.0);
-            sub_title(ui, "Verhalten");
+            sub_title(ui, tr!("Verhalten", "Behavior"));
             changed |= ui
-                .checkbox(&mut self.cfg.crawl, "Matches der Lobby-Mitspieler sammeln (für Builds, nie während eines Spiels)")
+                .checkbox(&mut self.cfg.crawl, tr!("Matches der Lobby-Mitspieler sammeln (für Builds, nie während eines Spiels)", "Collect matches of lobby players (for builds, never during a game)"))
                 .changed();
-            changed |= ui.checkbox(&mut self.cfg.auto_open_champselect, "Fenster bei Champ Select automatisch öffnen").changed();
+            changed |= ui.checkbox(&mut self.cfg.auto_open_champselect, tr!("Fenster bei Champ Select automatisch öffnen", "Open the window automatically in champ select")).changed();
             ui.add_space(4.0);
             egui::Grid::new("settings_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-                ui.label("Maximal gespeicherte Matches");
+                ui.label(tr!("Maximal gespeicherte Matches", "Maximum stored matches"));
                 changed |= ui.add(egui::DragValue::new(&mut self.cfg.max_matches).speed(100)).changed();
                 ui.end_row();
-                ui.label("Client-Ordner");
+                ui.label(tr!("Client-Ordner", "Client folder"));
                 changed |= ui
-                    .add(egui::TextEdit::singleline(&mut self.cfg.client_dir).hint_text("leer = automatisch").desired_width(260.0))
+                    .add(egui::TextEdit::singleline(&mut self.cfg.client_dir).hint_text(tr!("leer = automatisch", "empty = automatic")).desired_width(260.0))
                     .changed();
                 ui.end_row();
             });
@@ -2123,40 +2160,43 @@ impl App {
             self.cfg.max_matches = self.cfg.max_matches.clamp(500, 500_000);
             self.store.write(CONFIG, &self.cfg);
         }
+        if lang_changed {
+            self.force_reload();
+        }
         ui.add_space(8.0);
         theme::section(ui, |ui| {
-            sub_title(ui, "Daten");
+            sub_title(ui, tr!("Daten", "Data"));
             ui.horizontal_wrapped(|ui| {
                 kpi(ui, "Matches", self.matches.len().to_string());
-                kpi(ui, "eigene", self.my_games.len().to_string());
-                kpi(ui, "Lobbys", self.lobbies.len().to_string());
-                kpi(ui, "LP-Stände", self.snaps.len().to_string());
-                kpi(ui, "Größe", format!("{:.1} MB", self.store.db_size() as f64 / 1e6));
+                kpi(ui, tr!("eigene", "own"), self.my_games.len().to_string());
+                kpi(ui, tr!("Lobbys", "Lobbies"), self.lobbies.len().to_string());
+                kpi(ui, tr!("LP-Stände", "LP snapshots"), self.snaps.len().to_string());
+                kpi(ui, tr!("Größe", "Size"), format!("{:.1} MB", self.store.db_size() as f64 / 1e6));
             });
             ui.add_space(4.0);
             let c = &self.state.crawl;
             let phase = self.state.phase.as_str();
             let (txt, col) = if !self.cfg.crawl {
-                ("Scraper: aus (siehe Verhalten)".to_string(), theme::MUTED)
+                (tr!("Scraper: aus (siehe Verhalten)", "Scraper: off (see Behavior)").to_string(), theme::MUTED)
             } else if phase == "Client aus" || phase.is_empty() {
-                ("Scraper: pausiert – der League-Client ist geschlossen. Er sammelt nur bei offenem Client.".to_string(), GOLD)
+                (tr!("Scraper: pausiert – der League-Client ist geschlossen. Er sammelt nur bei offenem Client.", "Scraper: paused – the League client is closed. It only collects while the client is open.").to_string(), GOLD)
             } else if matches!(phase, "ChampSelect" | "GameStart" | "InProgress" | "Reconnect" | "WaitingForStats" | "PreEndOfGame") {
-                ("Scraper: pausiert während Champ Select und Spiel".to_string(), theme::MUTED)
+                (tr!("Scraper: pausiert während Champ Select und Spiel", "Scraper: paused during champ select and games").to_string(), theme::MUTED)
             } else if c.players == 0 && c.games == 0 {
-                (format!("Scraper: wartet auf neue Spieler · {} Matches seit Start", c.crawled), theme::MUTED)
+                (trf!("Scraper: wartet auf neue Spieler · {} Matches seit Start", "Scraper: waiting for new players · {} matches since start", c.crawled), theme::MUTED)
             } else {
-                (format!("Scraper: läuft · {} Matches seit Start · Warteschlange {} Spieler, {} Spiele", c.crawled, c.players, c.games), WIN)
+                (trf!("Scraper: läuft · {} Matches seit Start · Warteschlange {} Spieler, {} Spiele", "Scraper: running · {} matches since start · queue {} players, {} games", c.crawled, c.players, c.games), WIN)
             };
             ui.label(RichText::new(txt).color(col));
             if c.own_left > 0 {
-                ui.label(RichText::new(format!("Eigene Spiele: noch {} nachzuladen (Timelines, Zusatzwerte, älterer Verlauf)", c.own_left)).color(theme::MUTED));
+                ui.label(RichText::new(trf!("Eigene Spiele: noch {} nachzuladen (Timelines, Zusatzwerte, älterer Verlauf)", "Own games: {} left to load (timelines, extra values, older history)", c.own_left)).color(theme::MUTED));
             }
             ui.label(RichText::new(format!("{DB} in {}", self.store.dir.display())).small().color(theme::MUTED));
             ui.horizontal(|ui| {
-                if ui.button("Datenordner öffnen").clicked() {
+                if ui.button(tr!("Datenordner öffnen", "Open data folder")).clicked() {
                     let _ = std::process::Command::new("explorer").arg(&self.store.dir).spawn();
                 }
-                if ui.button("Tutorial öffnen").on_hover_text("Was lolstats kann, wo du was findest und wie du die Zahlen liest").clicked() {
+                if ui.button(tr!("Tutorial öffnen", "Open tutorial")).on_hover_text(tr!("Was lolstats kann, wo du was findest und wie du die Zahlen liest", "What lolstats can do, where to find things and how to read the numbers")).clicked() {
                     self.tab = Tab::Help;
                 }
             });
@@ -2166,18 +2206,19 @@ impl App {
             theme::section(ui, |ui| self.ui_update(ui));
             ui.add_space(8.0);
             theme::section(ui, |ui| {
-                sub_title(ui, "lolstats unterstützen");
-                ui.label(RichText::new("lolstats ist kostenlos und werbefrei. Wenn es dir hilft, freue ich mich über einen Kaffee auf Ko-fi.").color(theme::MUTED));
-                if ui.button("☕ Einen Kaffee spendieren (Ko-fi)").on_hover_text(SUPPORT_URL).clicked() {
+                sub_title(ui, tr!("lolstats unterstützen", "Support lolstats"));
+                ui.label(RichText::new(tr!("lolstats ist kostenlos und werbefrei. Wenn es dir hilft, freue ich mich über einen Kaffee auf Ko-fi.", "lolstats is free and ad-free. If it helps you, I'd appreciate a coffee on Ko-fi.")).color(theme::MUTED));
+                if ui.button(tr!("☕ Einen Kaffee spendieren (Ko-fi)", "☕ Buy me a coffee (Ko-fi)")).on_hover_text(SUPPORT_URL).clicked() {
                     let _ = std::process::Command::new("explorer").arg(SUPPORT_URL).spawn();
                 }
             });
         }
         ui.add_space(8.0);
         ui.label(
-            RichText::new(format!(
-                "Version {} ({EDITION}) · Autostart: Rechtsklick auf das Tray-Icon -> \"Mit Windows starten\".",
-                env!("CARGO_PKG_VERSION")
+            RichText::new(trf!(
+                "Version {} ({}) · Autostart: Rechtsklick auf das Tray-Icon -> \"Mit Windows starten\".", "Version {} ({}) · Autostart: right-click the tray icon -> \"Start with Windows\".",
+                env!("CARGO_PKG_VERSION"),
+                tx(EDITION)
             ))
             .small()
             .color(theme::MUTED),
@@ -2211,9 +2252,9 @@ fn lane_badge(ui: &mut egui::Ui, lane: &str, guess: bool) {
     ui.painter().galley(r.center() - g.size() / 2.0, g, col);
     if !short.is_empty() {
         resp.on_hover_text(if guess {
-            "Lane geschätzt: aus der Champion-Statistik aller gesammelten Matches (und Smite = Jungle)"
+            tr!("Lane geschätzt: aus der Champion-Statistik aller gesammelten Matches (und Smite = Jungle)", "Lane estimated: from the champion statistics of all collected matches (and Smite = jungle)")
         } else {
-            "Lane vom Client"
+            tr!("Lane vom Client", "Lane from the client")
         });
     }
 }
@@ -2224,8 +2265,8 @@ const WIDE_TWO_COL: f32 = 1000.0;
 /// Experten-Ansicht: Team-Tabellen haben 7 Spalten und brauchen mehr Platz.
 const WIDE_TEAMS_EXPERT: f32 = 1300.0;
 
-/// Tutorial (TUTORIAL.md), von build.rs auf die jeweilige Version gefiltert.
-const TUTORIAL: &str = include_str!(concat!(env!("OUT_DIR"), "/tutorial.md"));
+/// Tutorial (TUTORIAL.md / TUTORIAL.en.md), von build.rs auf die jeweilige Version gefiltert.
+const TUTORIAL: [&str; 2] = [include_str!(concat!(env!("OUT_DIR"), "/tutorial.md")), include_str!(concat!(env!("OUT_DIR"), "/tutorial.en.md"))];
 
 /// Pool-Bewertung erst ab so vielen Spielen; "zu breit", wenn die Top 3 weniger als diesen Anteil ausmachen.
 const POOL_MIN_GAMES: usize = 10;
@@ -2274,7 +2315,7 @@ fn ui_help(ui: &mut egui::Ui, scroll: egui::ScrollArea) {
         ui.set_max_width(width);
         let mut table: Vec<Vec<String>> = Vec::new();
         let mut n_table = 0;
-        let lines: Vec<&str> = TUTORIAL.lines().collect();
+        let lines: Vec<&str> = crate::i18n::l(TUTORIAL).lines().collect();
         for (i, raw) in lines.iter().enumerate() {
             let line = raw.trim_end();
             // Versionsabschnitte filtert schon build.rs; übrige HTML-Kommentare nicht anzeigen
@@ -2450,7 +2491,7 @@ fn item_row(ui: &mut egui::Ui, icons: &Icons, id: i32, name: &str, rate: f32, ag
         ng = p.layout_no_wrap(format!("{}…", chars.iter().collect::<String>().trim_end()), FontId::proportional(14.0), Color32::WHITE);
     }
     p.galley(Pos2::new(x, row.top() + 1.0), ng, Color32::WHITE);
-    let info = p.layout_no_wrap(format!("{:.0} % · {} Sp.", rate * 100.0, agg.games), FontId::proportional(11.5), theme::MUTED);
+    let info = p.layout_no_wrap(trf!("{:.0} % · {} Sp.", "{:.0} % · {} g", rate * 100.0, agg.games), FontId::proportional(11.5), theme::MUTED);
     let bar_w = (row.right() - x - info.size().x - 10.0).max(30.0);
     let bar = Rect::from_min_size(Pos2::new(x, row.top() + 27.0), egui::vec2(bar_w, 6.0));
     p.rect_filled(bar, 3.0, theme::INSET);
@@ -2540,7 +2581,7 @@ fn scatter(ui: &mut egui::Ui, lab: &Lab) {
     let ymax = recs.iter().fold(35.0f32, |m, r| m.max(r.delta.abs() as f32 + 5.0));
     let c = Chart::new(ui, 220.0, (-span, span), (-ymax, ymax));
     if recs.is_empty() {
-        c.note("Noch keine Messpunkte mit Lobby");
+        c.note(tr!("Noch keine Messpunkte mit Lobby", "No data points with lobby yet"));
         return;
     }
     let mut y = -((ymax / 10.0).floor() * 10.0);
@@ -2550,14 +2591,14 @@ fn scatter(ui: &mut egui::Ui, lab: &Lab) {
     }
     let mid = c.pos(0.0, 0.0);
     c.painter.line_segment([Pos2::new(mid.x, c.rect.top() + 4.0), Pos2::new(mid.x, c.rect.bottom() - 18.0)], Stroke::new(1.0_f32, Color32::from_gray(110)));
-    c.painter.text(Pos2::new(c.rect.right() - 6.0, c.rect.bottom() - 4.0), Align2::RIGHT_BOTTOM, "Lobby stärker ->", FontId::proportional(10.0), Color32::from_gray(150));
-    c.painter.text(Pos2::new(c.rect.left() + 48.0, c.rect.bottom() - 4.0), Align2::LEFT_BOTTOM, "<- Lobby schwächer", FontId::proportional(10.0), Color32::from_gray(150));
+    c.painter.text(Pos2::new(c.rect.right() - 6.0, c.rect.bottom() - 4.0), Align2::RIGHT_BOTTOM, tr!("Lobby stärker ->", "Lobby stronger ->"), FontId::proportional(10.0), Color32::from_gray(150));
+    c.painter.text(Pos2::new(c.rect.left() + 48.0, c.rect.bottom() - 4.0), Align2::LEFT_BOTTOM, tr!("<- Lobby schwächer", "<- Lobby weaker"), FontId::proportional(10.0), Color32::from_gray(150));
     // Modellgeraden: Sieg = a + b·x, Niederlage = -(a - b·x)
     let mut tips = Vec::new();
     for (r, &x) in recs.iter().zip(&xs) {
         let p = c.pos(x, r.delta as f32);
         c.painter.circle_filled(p, 4.0, if r.win { WIN } else { LOSS });
-        tips.push((p, format!("{} {:+} LP · Lobby {} · Rang {} · {}", if r.win { "Sieg" } else { "Niederlage" }, r.delta, div_label(r.lobby), value_label(r.rank), ago(r.ts))));
+        tips.push((p, trf!("{} {:+} LP · Lobby {} · Rang {} · {}", "{} {:+} LP · lobby {} · rank {} · {}", if r.win { tr!("Sieg", "Victory") } else { tr!("Niederlage", "Defeat") }, r.delta, div_label(r.lobby), value_label(r.rank), ago(r.ts))));
     }
     c.tooltip(&tips);
 }
@@ -2568,7 +2609,7 @@ fn delta_chart(ui: &mut egui::Ui, rows: &[LabRow]) {
     let n = rows.len().max(1) as f32;
     let c = Chart::new(ui, 170.0, (0.0, n), (-ymax, ymax));
     if rows.is_empty() {
-        c.note("Noch keine Spiele");
+        c.note(tr!("Noch keine Spiele", "No games yet"));
         return;
     }
     for y in [-30.0f32, -20.0, -10.0, 0.0, 10.0, 20.0, 30.0] {
@@ -2593,11 +2634,11 @@ fn delta_chart(ui: &mut egui::Ui, rows: &[LabRow]) {
 
 fn rec_grid(ui: &mut egui::Ui, id: &str, recs: &[Rec], names: &Names) {
     if recs.is_empty() {
-        ui.label(RichText::new("Noch zu wenige Daten: mindestens 3 eigene Spiele pro Champion.").weak());
+        ui.label(RichText::new(tr!("Noch zu wenige Daten: mindestens 3 eigene Spiele pro Champion.", "Not enough data yet: at least 3 own games per champion.")).weak());
         return;
     }
     egui::Grid::new(id).striped(true).show(ui, |ui| {
-        for h in ["Champion", "Score", "Deine WR", "KDA", "vs. Gegner (alle Matches)", "Du vs. Gegner", "auf Position"] {
+        for h in ["Champion", "Score", tr!("Deine WR", "Your WR"), "KDA", tr!("vs. Gegner (alle Matches)", "vs enemies (all matches)"), tr!("Du vs. Gegner", "You vs enemies"), tr!("auf Position", "on position")] {
             ui.label(RichText::new(h).weak());
         }
         ui.end_row();
@@ -2610,14 +2651,14 @@ fn rec_grid(ui: &mut egui::Ui, id: &str, recs: &[Rec], names: &Names) {
             ui.label(format!("{:.2}", r.kda));
             ui.label(agg(&r.vs_db));
             ui.label(agg(&r.vs_me));
-            ui.label(if r.on_pos > 0 { format!("{} Sp.", r.on_pos) } else { "-".into() });
+            ui.label(if r.on_pos > 0 { trf!("{} Sp.", "{} g", r.on_pos) } else { "-".into() });
             ui.end_row();
         }
     });
     ui.label(
         RichText::new(
-            "Score: 50 % deine Stärke auf dem Champion, 35 % Matchup gegen die Gegner aus allen gesammelten Matches, \
-             15 % deine eigenen Spiele gegen diese Gegner. Kleine Stichproben zählen Richtung 50 %.",
+            tr!("Score: 50 % deine Stärke auf dem Champion, 35 % Matchup gegen die Gegner aus allen gesammelten Matches, \
+             15 % deine eigenen Spiele gegen diese Gegner. Kleine Stichproben zählen Richtung 50 %.", "Score: 50 % your strength on the champion, 35 % matchup against the enemies from all collected matches, 15 % your own games against these enemies. Small samples count towards 50 %."),
         )
         .small()
         .weak(),
@@ -2640,74 +2681,74 @@ fn help_header(ui: &mut egui::Ui, title: &str, help: &str) {
 
 
 
-const HELP_QUEUE: &str = "Prüft die 'Loser Queue'-Vermutung: Bekommst du nach einer Siegesserie schlechtere Mitspieler als die Gegner?\n\
+const HELP_QUEUE: [&str; 2] = ["Prüft die 'Loser Queue'-Vermutung: Bekommst du nach einer Siegesserie schlechtere Mitspieler als die Gegner?\n\
 Pro Spiel: Mitspieler (ohne dich) minus Gegner – Troll/AFK-Quote (AFK = unter halbem Team-Gold, Troll = 10+ Tode bei KDA unter 1), \
 Rang-Schnitt, Form (Winrate der letzten 20), KDA im Spiel.\n\
 Verglichen wird 'nach 2+ Siegen in Folge' mit 'sonst'. Gäbe es eine Loser Queue, wären die Mitspieler nach Serien \
 messbar schlechter als die Gegner (negativer Rang/Form/KDA-Wert, positive Troll-Quote).\n\
-p = Zufallstest mit 2000 zufälligen Gruppeneinteilungen. Urteil ab 15 Spielen je Gruppe.";
+p = Zufallstest mit 2000 zufälligen Gruppeneinteilungen. Urteil ab 15 Spielen je Gruppe.", "Tests the 'loser queue' theory: do you get worse teammates than the enemies after a win streak?\nPer game: teammates (without you) minus enemies – troll/AFK rate (AFK = under half the team's gold, troll = 10+ deaths with KDA under 1), average rank, form (win rate of the last 20), KDA in the game.\nCompared: 'after 2+ wins in a row' vs 'otherwise'. If there was a loser queue, teammates after streaks would be measurably worse than the enemies (negative rank/form/KDA value, positive troll rate).\np = random test with 2000 random group assignments. Verdict from 15 games per group."];
 
-const HELP_MATCHUP_RUNES: &str = "Aus allen gesammelten Matches: Spieler deines Champions gegen genau diesen Lane-Gegner. \
+const HELP_MATCHUP_RUNES: [&str; 2] = ["Aus allen gesammelten Matches: Spieler deines Champions gegen genau diesen Lane-Gegner. \
 Gezeigt werden Runen, die dabei mindestens 15 Prozentpunkte häufiger gewählt werden als gegen alle anderen Gegner \
-(ab 8 Spielen im Matchup, je Rune mindestens 3). Maus über eine Rune: Anteil und Bilanz.";
+(ab 8 Spielen im Matchup, je Rune mindestens 3). Maus über eine Rune: Anteil und Bilanz.", "From all collected matches: players of your champion against exactly this lane opponent. Shown are runes picked at least 15 percentage points more often than against all other opponents (from 8 games in the matchup, at least 3 per rune). Hover a rune: share and record."];
 
-const HELP_COACH: &str = "Nur deine eigenen Spiele auf Summoner's Rift. Für jedes Merkmal: Siegchance in Spielen mit dem Merkmal gegen Spiele ohne.\n\
+const HELP_COACH: [&str; 2] = ["Nur deine eigenen Spiele auf Summoner's Rift. Für jedes Merkmal: Siegchance in Spielen mit dem Merkmal gegen Spiele ohne.\n\
 Unterschied erst ab 10 Spielen je Seite. Grün ab +10 Prozentpunkten. Das zeigt Zusammenhänge, keine Ursachen – \
 ein CS-Vorsprung kann auch Folge eines schwachen Gegners sein.\n\
 CS-Vorsprung: dein CS minus der deines direkten Lane-Gegners (Timeline, inkl. Jungle-Monster).\n\
-Vision: Spiele ab 20 min, geteilt am Median deiner Vision pro Minute; Midgame = Minute 14 bis 25.";
+Vision: Spiele ab 20 min, geteilt am Median deiner Vision pro Minute; Midgame = Minute 14 bis 25.", "Only your own Summoner's Rift games. For each trait: win rate in games with the trait vs games without.\nDifference only from 10 games per side. Green from +10 percentage points. This shows correlations, not causes – a CS lead can also be the result of a weak opponent.\nCS lead: your CS minus your direct lane opponent's (timeline, incl. jungle monsters).\nVision: games from 20 min, split at the median of your vision per minute; midgame = minute 14 to 25."];
 
-const HELP_CS_TACHO: &str = "Dein CS im laufenden Spiel, alle 15 Sekunden aus der Live-Client-API.\n\
+const HELP_CS_TACHO: [&str; 2] = ["Dein CS im laufenden Spiel, alle 15 Sekunden aus der Live-Client-API.\n\
 Achtung: Riot meldet CS dort nur in 10er-Schritten (für alle Spieler) – der Wert springt deshalb nur etwa alle 1–2 Minuten. \
 'Stand vor X s' zeigt, wann zuletzt abgefragt wurde.\n\
 Dein Schnitt: Ø CS bei 10, 15 und 20 Minuten aus deinen Timelines, dazwischen linear – ab 3 Spielen nur auf diesem Champion.\n\
 Elo: Ø CS/min dieses Champions über ganze Spiele in deiner Elo (±400 LP, sonst alle Elos), umgerechnet auf die Zeit \
 seit den ersten Vasallen (~1:15). Grob – die Farm-Rate ändert sich im Spielverlauf.\n\
-Lane-Gegner: CS deines direkten Gegners (gleiche Lane).";
+Lane-Gegner: CS deines direkten Gegners (gleiche Lane).", "Your CS in the running game, every 15 seconds from the live client API.\nNote: Riot reports CS there only in steps of 10 (for all players) – so the value only changes every 1–2 minutes. 'Updated X s ago' shows when it was last queried.\nYour average: avg CS at 10, 15 and 20 minutes from your timelines, linear in between – from 3 games only on this champion.\nElo: avg CS/min of this champion over whole games in your elo (±400 LP, otherwise all elos), converted to the time since the first minions (~1:15). Rough – the farm rate changes during the game.\nLane opponent: CS of your direct opponent (same lane)."];
 
-const HELP_TILT: &str = "Erscheint nach 2+ Niederlagen in Folge, wenn das letzte Spiel weniger als 2 Stunden her ist (gleiche Session).\n\
+const HELP_TILT: [&str; 2] = ["Erscheint nach 2+ Niederlagen in Folge, wenn das letzte Spiel weniger als 2 Stunden her ist (gleiche Session).\n\
 Verglichen wird deine Siegchance in Spielen direkt nach 2+ Niederlagen in derselben Session mit allen anderen Spielen \
 (Summoner's Rift, alle Modi). Rot, wenn du danach mehr als 5 Prozentpunkte seltener gewinnst.\n\
 Frühe Tode: Tode vor Minute 10 in der aktuellen Serie gegen deinen Schnitt (nur Spiele mit Timeline).\n\
 Lange Session: Ohne Niederlagenserie erscheint der Hinweis ab dem 3. Spiel einer Session, aber nur, wenn du ab dem 4. Spiel \
-belegbar seltener gewinnst (mindestens 10 Prozentpunkte, je Seite ab 10 Spielen).";
+belegbar seltener gewinnst (mindestens 10 Prozentpunkte, je Seite ab 10 Spielen).", "Appears after 2+ losses in a row if the last game was less than 2 hours ago (same session).\nCompares your win rate in games right after 2+ losses in the same session with all other games (Summoner's Rift, all modes). Red if you win more than 5 percentage points less often afterwards.\nEarly deaths: deaths before minute 10 in the current streak vs your average (only games with timeline).\nLong session: without a losing streak the hint appears from the 3rd game of a session, but only if you demonstrably win less often from the 4th game (at least 10 percentage points, from 10 games per side)."];
 
 
 
-const HELP_KPI: &str = "Spiele: Solo/Duo-Spiele mit messbarer LP-Änderung.\n\
+const HELP_KPI: [&str; 2] = ["Spiele: Solo/Duo-Spiele mit messbarer LP-Änderung.\n\
 mit Lobby: davon mit erfassten Rängen der Mitspieler.\n\
-Ø Sieg / Ø Niederlage: durchschnittlich gewonnene bzw. verlorene LP.";
+Ø Sieg / Ø Niederlage: durchschnittlich gewonnene bzw. verlorene LP.", "Games: Solo/Duo games with measurable LP change.\nwith lobby: those with captured ranks of the other players.\nAvg win / Avg loss: average LP won or lost."];
 
 
-const HELP_SCATTER: &str = "Jeder Punkt ist ein Spiel. Rechts = deine Lobby war stärker als dein Rang, links = schwächer.\n\
+const HELP_SCATTER: [&str; 2] = ["Jeder Punkt ist ein Spiel. Rechts = deine Lobby war stärker als dein Rang, links = schwächer.\n\
 Grün oben = Siege (+LP), rot unten = Niederlagen (-LP).\n\
-Steigen die Punkte nach rechts an, bekommst du in stärkeren Lobbys mehr LP. Liegen sie flach, hängt deine LP kaum von der Lobby ab.";
+Steigen die Punkte nach rechts an, bekommst du in stärkeren Lobbys mehr LP. Liegen sie flach, hängt deine LP kaum von der Lobby ab.", "Each dot is a game. Right = your lobby was stronger than your rank, left = weaker.\nGreen on top = wins (+LP), red below = losses (-LP).\nIf the dots rise to the right, you get more LP in stronger lobbies. If they are flat, your LP hardly depends on the lobby."];
 
-const HELP_DELTAS: &str = "Jeder Balken ist ein Spiel: grün = Sieg, rot = Niederlage, grau = 0 LP trotz Niederlage (Abstiegs- oder Verlustschutz).\n\
-Werden die grünen Balken größer und die roten kleiner, bekommst du mehr LP pro Sieg als du pro Niederlage verlierst.";
+const HELP_DELTAS: [&str; 2] = ["Jeder Balken ist ein Spiel: grün = Sieg, rot = Niederlage, grau = 0 LP trotz Niederlage (Abstiegs- oder Verlustschutz).\n\
+Werden die grünen Balken größer und die roten kleiner, bekommst du mehr LP pro Sieg als du pro Niederlage verlierst.", "Each bar is a game: green = win, red = loss, gray = 0 LP despite a loss (demotion or loss protection).\nIf the green bars get bigger and the red ones smaller, you get more LP per win than you lose per loss."];
 
 
 
-const HELP_STREAKS: &str = "Winrate und LP abhängig davon, wie deine letzten Spiele liefen.\n\
+const HELP_STREAKS: [&str; 2] = ["Winrate und LP abhängig davon, wie deine letzten Spiele liefen.\n\
 Fällt die Winrate nach Niederlagenserien deutlich ab, kann Tilt eine Rolle spielen: dann lohnt eine Pause.\n\
-Die LP-Spalten zeigen, ob Riot nach Serien andere LP vergibt.";
+Die LP-Spalten zeigen, ob Riot nach Serien andere LP vergibt.", "Win rate and LP depending on how your last games went.\nIf the win rate drops clearly after losing streaks, tilt may play a role: then a break is worth it.\nThe LP columns show whether Riot gives different LP after streaks."];
 
-const HELP_TEAMS: &str = "Deine Winrate, je nachdem ob dein Team (ohne dich) im Schnitt höher, gleich oder niedriger gerankt war als der Gegner.\n\
-Große Unterschiede zeigen, wie stark das Matchmaking deine Ergebnisse beeinflusst.";
+const HELP_TEAMS: [&str; 2] = ["Deine Winrate, je nachdem ob dein Team (ohne dich) im Schnitt höher, gleich oder niedriger gerankt war als der Gegner.\n\
+Große Unterschiede zeigen, wie stark das Matchmaking deine Ergebnisse beeinflusst.", "Your win rate depending on whether your team (without you) was ranked higher, equal or lower than the enemy on average.\nBig differences show how strongly matchmaking influences your results."];
 
-const HELP_COMPS: &str = "Über alle gesammelten Matches: Winrate von Teams nach Schadensprofil, CC und Haltbarkeit im Vergleich zum Gegner.\n\
+const HELP_COMPS: [&str; 2] = ["Über alle gesammelten Matches: Winrate von Teams nach Schadensprofil, CC und Haltbarkeit im Vergleich zum Gegner.\n\
 Werte deutlich über 50 % zeigen, welche Zusammensetzungen in deiner Elo funktionieren.\n\
-Jedes Match zählt für beide Teams, deshalb spiegeln sich 'mehr' und 'weniger' (z. B. 55 % und 45 %).";
+Jedes Match zählt für beide Teams, deshalb spiegeln sich 'mehr' und 'weniger' (z. B. 55 % und 45 %).", "Across all collected matches: win rate of teams by damage profile, CC and durability compared to the enemy.\nValues clearly above 50 % show which compositions work in your elo.\nEach match counts for both teams, so 'more' and 'less' mirror each other (e.g. 55 % and 45 %)."];
 
-const HELP_LOG: &str = "Jede Zeile ist ein Solo/Duo-Spiel, neueste oben.\n\
+const HELP_LOG: [&str; 2] = ["Jede Zeile ist ein Solo/Duo-Spiel, neueste oben.\n\
 Lobby-/Team-/Gegner-Ø: durchschnittlicher Rang der anderen Spieler.\n\
 Serie: Siege (+) bzw. Niederlagen (-) direkt vor dem Spiel.\n\
-N* = Niederlage ohne LP-Verlust (Abstiegs- oder Verlustschutz).";
+N* = Niederlage ohne LP-Verlust (Abstiegs- oder Verlustschutz).", "Each row is a Solo/Duo game, newest on top.\nLobby/team/enemy avg: average rank of the other players.\nStreak: wins (+) or losses (-) right before the game.\nN* = loss without LP loss (demotion or loss protection)."];
 
 /// Einfacher Linienverlauf mit Min/Mitte/Max-Linien und Tooltip pro Punkt.
 fn line_chart(ui: &mut egui::Ui, vals: &[f64], col: Color32, fmt: &dyn Fn(f64) -> String, tips: &[String]) {
     if vals.len() < 2 {
-        ui.label(RichText::new("Braucht mindestens 2 Spiele.").weak());
+        ui.label(RichText::new(tr!("Braucht mindestens 2 Spiele.", "Needs at least 2 games.")).weak());
         return;
     }
     let lo = vals.iter().copied().fold(f64::INFINITY, f64::min);
@@ -2749,7 +2790,7 @@ fn death_histogram(ui: &mut egui::Ui, gs: &[GameStat]) {
         c.painter.rect_filled(Rect::from_min_max(Pos2::new(top.x - w / 2.0, top.y), Pos2::new(top.x + w / 2.0, bottom.y)), 1.0, col);
         let label = if i == BUCKETS - 1 { format!("{}+", i * 5) } else { format!("{}–{}", i * 5, i * 5 + 5) };
         c.painter.text(Pos2::new(bottom.x, c.rect.bottom() - 3.0), Align2::CENTER_BOTTOM, &label, FontId::proportional(10.0), Color32::from_gray(150));
-        tips.push((top, format!("Minute {label}: {n} Tode")));
+        tips.push((top, trf!("Minute {label}: {n} Tode", "Minute {label}: {n} deaths")));
     }
     c.tooltip(&tips);
 }
@@ -2794,12 +2835,12 @@ impl eframe::App for App {
                 ui.add_space(18.0);
                 for (tab, icon, label) in [
                     (Tab::Live, "📡", "Live"),
-                    (Tab::Me, "👤", "Ich"),
+                    (Tab::Me, "👤", tr!("Ich", "Me")),
                     (Tab::Builds, "🛠", "Builds"),
-                    (Tab::Lab, "🔬", "Labor"),
-                    (Tab::Perf, "📈", "Leistung"),
+                    (Tab::Lab, "🔬", tr!("Labor", "Lab")),
+                    (Tab::Perf, "📈", tr!("Leistung", "Performance")),
                     (Tab::Help, "📖", "Tutorial"),
-                    (Tab::Settings, "⚙", "Einstellungen"),
+                    (Tab::Settings, "⚙", tr!("Einstellungen", "Settings")),
                 ] {
                     if tab == Tab::Lab && !self.cfg.expert {
                         continue;
@@ -2813,20 +2854,20 @@ impl eframe::App for App {
                 let mut open_settings = false;
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                     if update_ready {
-                        let txt = if compact { "⬆" } else { "⬆ Update verfügbar" };
-                        if ui.add(egui::Button::new(RichText::new(txt).color(GOLD)).frame(false)).on_hover_text("Neue lolstats-Version – in den Einstellungen installieren").clicked() {
+                        let txt = if compact { "⬆" } else { tr!("⬆ Update verfügbar", "⬆ Update available") };
+                        if ui.add(egui::Button::new(RichText::new(txt).color(GOLD)).frame(false)).on_hover_text(tr!("Neue lolstats-Version – in den Einstellungen installieren", "New lolstats version – install it in the settings")).clicked() {
                             open_settings = true;
                         }
                         ui.add_space(6.0);
                     }
                     let (dot, phase) = match self.state.phase.as_str() {
-                        "" | "Client aus" => (theme::MUTED, "Client aus"),
-                        "None" => (WIN, "Client bereit"),
-                        "Matchmaking" | "ReadyCheck" => (theme::ACCENT, "Suche läuft"),
+                        "" | "Client aus" => (theme::MUTED, tr!("Client aus", "Client off")),
+                        "None" => (WIN, tr!("Client bereit", "Client ready")),
+                        "Matchmaking" | "ReadyCheck" => (theme::ACCENT, tr!("Suche läuft", "In queue")),
                         "ChampSelect" => (GOLD, "Champ Select"),
-                        "GameStart" | "InProgress" => (GOLD, "Im Spiel"),
+                        "GameStart" | "InProgress" => (GOLD, tr!("Im Spiel", "In game")),
                         "Reconnect" => (LOSS, "Reconnect"),
-                        "WaitingForStats" | "PreEndOfGame" | "EndOfGame" => (theme::ACCENT, "Spielende"),
+                        "WaitingForStats" | "PreEndOfGame" | "EndOfGame" => (theme::ACCENT, tr!("Spielende", "Game end")),
                         p => (WIN, p),
                     };
                     if compact {
@@ -2857,13 +2898,13 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     let done = self.reloaded.is_some_and(|t| t.elapsed() < Duration::from_secs(4));
                     if done {
-                        ui.label(RichText::new("✓ aktualisiert").small().color(WIN));
+                        ui.label(RichText::new(tr!("✓ aktualisiert", "✓ refreshed")).small().color(WIN));
                     }
-                    let btn = egui::Button::new(RichText::new("⟳  Aktualisieren").font(FontId::new(13.0, theme::bold())))
+                    let btn = egui::Button::new(RichText::new(tr!("⟳  Aktualisieren", "⟳  Refresh")).font(FontId::new(13.0, theme::bold())))
                         .fill(Color32::from_rgba_unmultiplied(56, 189, 178, 40))
                         .stroke(Stroke::new(1.0_f32, theme::ACCENT));
                     let resp = ui.add(btn).on_hover_text(
-                        "Lädt alle Daten neu und lässt lolstats sofort beim Client nachfragen: neue eigene Matches, LP-Stand, Namen (F5)",
+                        tr!("Lädt alle Daten neu und lässt lolstats sofort beim Client nachfragen: neue eigene Matches, LP-Stand, Namen (F5)", "Reloads all data and makes lolstats query the client immediately: new own matches, LP, names (F5)"),
                     );
                     reload |= resp.clicked() || ctx.input(|i| i.key_pressed(egui::Key::F5));
                 });

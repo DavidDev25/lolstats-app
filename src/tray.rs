@@ -111,12 +111,12 @@ fn toggle_autostart() {
 
 unsafe fn show_menu(hwnd: HWND) {
     let m = CreatePopupMenu();
-    AppendMenuW(m, MF_STRING, ID_OPEN, wide("Statistik öffnen").as_ptr());
+    AppendMenuW(m, MF_STRING, ID_OPEN, wide(tr!("Statistik öffnen", "Open stats")).as_ptr());
     let auto = if autostart_enabled() { MF_CHECKED } else { 0 };
-    AppendMenuW(m, MF_STRING | auto, ID_AUTOSTART, wide("Mit Windows starten").as_ptr());
-    AppendMenuW(m, MF_STRING, ID_FOLDER, wide("Datenordner").as_ptr());
+    AppendMenuW(m, MF_STRING | auto, ID_AUTOSTART, wide(tr!("Mit Windows starten", "Start with Windows")).as_ptr());
+    AppendMenuW(m, MF_STRING, ID_FOLDER, wide(tr!("Datenordner", "Data folder")).as_ptr());
     AppendMenuW(m, MF_SEPARATOR, 0, std::ptr::null());
-    AppendMenuW(m, MF_STRING, ID_QUIT, wide("Beenden").as_ptr());
+    AppendMenuW(m, MF_STRING, ID_QUIT, wide(tr!("Beenden", "Quit")).as_ptr());
     let mut pt: POINT = std::mem::zeroed();
     GetCursorPos(&mut pt);
     SetForegroundWindow(hwnd);

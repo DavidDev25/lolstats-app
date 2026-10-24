@@ -138,9 +138,9 @@ pub fn build(lobbies: &[Lobby], snaps: &[LpSnap]) -> Lab {
     }
 
     let mut teams = vec![
-        ("Dein Team > 50 LP höher", Agg::default()),
-        ("ungefähr gleich (±50)", Agg::default()),
-        ("Gegner > 50 LP höher", Agg::default()),
+        (tr!("Dein Team > 50 LP höher", "Your team > 50 LP higher"), Agg::default()),
+        (tr!("ungefähr gleich (±50)", "roughly equal (±50)"), Agg::default()),
+        (tr!("Gegner > 50 LP höher", "Enemy > 50 LP higher"), Agg::default()),
     ];
     for r in &rows {
         if let (Some(t), Some(e)) = (r.team, r.enemy) {
@@ -162,12 +162,12 @@ pub fn build(lobbies: &[Lobby], snaps: &[LpSnap]) -> Lab {
 
 pub fn streak_label(s: i32) -> String {
     match s {
-        3 => "3+ Siege in Folge".into(),
-        -3 => "3+ Niederlagen in Folge".into(),
-        1 => "nach 1 Sieg".into(),
-        -1 => "nach 1 Niederlage".into(),
-        s if s > 0 => format!("nach {s} Siegen"),
-        s => format!("nach {} Niederlagen", -s),
+        3 => tr!("3+ Siege in Folge", "3+ wins in a row").into(),
+        -3 => tr!("3+ Niederlagen in Folge", "3+ losses in a row").into(),
+        1 => tr!("nach 1 Sieg", "after 1 win").into(),
+        -1 => tr!("nach 1 Niederlage", "after 1 loss").into(),
+        s if s > 0 => trf!("nach {s} Siegen", "after {s} wins"),
+        s => trf!("nach {} Niederlagen", "after {} losses", -s),
     }
 }
 
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn streak_labels() {
-        assert_eq!(streak_label(-3), "3+ Niederlagen in Folge");
+        assert_eq!(streak_label(-3), tr!("3+ Niederlagen in Folge", "3+ losses in a row"));
         assert_eq!(streak_label(2), "nach 2 Siegen");
     }
 }

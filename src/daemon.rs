@@ -215,7 +215,7 @@ impl<'a> Worker<'a> {
         self.last_update = Some(Instant::now());
         if let Some(v) = crate::update::check_if_due(self.store) {
             self.log(&format!("Update verfügbar: {v} (installiert: {})", crate::update::VERSION));
-            tray::balloon("lolstats-Update verfügbar", &format!("Version {v} – im Fenster unter Einstellungen installieren"));
+            tray::balloon(tr!("lolstats-Update verfügbar", "lolstats update available"), &trf!("Version {v} – im Fenster unter Einstellungen installieren", "Version {v} – install it in the window under Settings"));
         }
     }
 
@@ -247,6 +247,8 @@ impl<'a> Worker<'a> {
                 self.store.write(CONFIG, &self.cfg);
             }
             self.cfg_mtime = self.store.mtime(CONFIG);
+            // Sprache auch für Tray-Menü, Hinweise und Meldungen des Dienstes
+            crate::i18n::apply(&self.cfg.lang);
         }
     }
 
@@ -645,7 +647,7 @@ impl<'a> Worker<'a> {
         res.rank = now.label();
         let gid = res.game_id;
         self.log(&format!("Ergebnis {gid} nachträglich korrigiert: {d:+} LP (Riot hat verspätet abgerechnet)"));
-        tray::balloon("LP nachträglich abgerechnet", &format!("{d:+} LP · {}", now.label()));
+        tray::balloon(tr!("LP nachträglich abgerechnet", "LP settled late"), &format!("{d:+} LP · {}", now.label()));
         self.save_state();
     }
 
@@ -1054,14 +1056,14 @@ impl<'a> Worker<'a> {
         if ranked && win == Some(false) && matches!(delta, None | Some(0)) {
             let afk = my_match.as_ref().and_then(|m| m.afk_teammate(&me.puuid));
             self.state.note = match afk {
-                Some(p) => format!(
-                    "Verlustschutz: {} war vermutlich AFK ({} Gold, Level {}, {} CS) – deshalb kein LP-Abzug.",
+                Some(p) => trf!(
+                    "Verlustschutz: {} war vermutlich AFK ({} Gold, Level {}, {} CS) – deshalb kein LP-Abzug.", "Loss protection: {} was probably AFK ({} gold, level {}, {} CS) – that's why no LP were lost.",
                     self.names.champ(p.champ),
                     p.gold,
                     p.level,
                     p.cs
                 ),
-                None => "Kein LP-Abzug trotz Niederlage (Riots Verlustschutz, Grund nicht erkennbar).".into(),
+                None => tr!("Kein LP-Abzug trotz Niederlage (Riots Verlustschutz, Grund nicht erkennbar).", "No LP loss despite the defeat (Riot's loss protection, reason unknown).").into(),
             };
             self.log(&self.state.note.clone());
         }
@@ -1071,9 +1073,9 @@ impl<'a> Worker<'a> {
             "Remake"
         } else {
             match win {
-                Some(true) => "Sieg",
-                Some(false) => "Niederlage",
-                None => "Spiel beendet",
+                Some(true) => tr!("Sieg", "Victory"),
+                Some(false) => tr!("Niederlage", "Defeat"),
+                None => tr!("Spiel beendet", "Game over"),
             }
         };
         let mut body = String::new();

@@ -30,9 +30,9 @@ pub enum Profile {
 impl Profile {
     pub fn label(self) -> &'static str {
         match self {
-            Profile::Balanced => "ausgewogen (AD + AP)",
-            Profile::AdHeavy => "einseitig AD (4+ AD)",
-            Profile::ApHeavy => "einseitig AP (4+ AP)",
+            Profile::Balanced => tr!("ausgewogen (AD + AP)", "balanced (AD + AP)"),
+            Profile::AdHeavy => tr!("einseitig AD (4+ AD)", "one-sided AD (4+ AD)"),
+            Profile::ApHeavy => tr!("einseitig AP (4+ AP)", "one-sided AP (4+ AP)"),
         }
     }
 }
@@ -67,8 +67,8 @@ impl Comp {
     }
 
     pub fn label(&self) -> String {
-        format!(
-            "{} AD · {} AP · {} gemischt · CC {} · Haltbarkeit {} · Mobilität {}",
+        trf!(
+            "{} AD · {} AP · {} gemischt · CC {} · Haltbarkeit {} · Mobilität {}", "{} AD · {} AP · {} mixed · CC {} · durability {} · mobility {}",
             self.ad, self.ap, self.mixed, self.cc, self.durability, self.mobility
         )
     }
@@ -101,11 +101,11 @@ pub fn comp_stats(ms: &[Match], info: &HashMap<i32, ChampInfo>) -> CompStats {
             (Profile::AdHeavy, Agg::default()),
             (Profile::ApHeavy, Agg::default()),
         ],
-        cc: vec![("3+ mehr CC als Gegner", Agg::default()), ("ähnlich (±2)", Agg::default()), ("3+ weniger CC", Agg::default())],
+        cc: vec![(tr!("3+ mehr CC als Gegner", "3+ more CC than enemy"), Agg::default()), (tr!("ähnlich (±2)", "similar (±2)"), Agg::default()), (tr!("3+ weniger CC", "3+ less CC"), Agg::default())],
         durability: vec![
-            ("3+ mehr Haltbarkeit", Agg::default()),
-            ("ähnlich (±2)", Agg::default()),
-            ("3+ weniger Haltbarkeit", Agg::default()),
+            (tr!("3+ mehr Haltbarkeit", "3+ more durability"), Agg::default()),
+            (tr!("ähnlich (±2)", "similar (±2)"), Agg::default()),
+            (tr!("3+ weniger Haltbarkeit", "3+ less durability"), Agg::default()),
         ],
         ..Default::default()
     };
@@ -363,15 +363,15 @@ pub fn coaching(gs: &[GameStat], gpm: &HashMap<i32, (f64, usize)>) -> Coaching {
         l
     };
     let lines = vec![
-        line("kein Tod vor Minute 10", &|g| g.timeline.as_ref().map(|t| t.deaths.iter().all(|&d| d >= 600))),
-        line("CS-Vorsprung bei 10 min", &|g| lead10(g).map(|d| d > 0)),
-        line("CS-Vorsprung bei 15 min", &|g| lead15(g).map(|d| d > 0)),
-        line("Vision/min über deinem Schnitt", &|g| Some(vis(g)? > vis_median?)),
-        line("höchstens 5 Tode", &|g| Some(g.d <= 5)),
+        line(tr!("kein Tod vor Minute 10", "no death before minute 10"), &|g| g.timeline.as_ref().map(|t| t.deaths.iter().all(|&d| d >= 600))),
+        line(tr!("CS-Vorsprung bei 10 min", "CS lead at 10 min"), &|g| lead10(g).map(|d| d > 0)),
+        line(tr!("CS-Vorsprung bei 15 min", "CS lead at 15 min"), &|g| lead15(g).map(|d| d > 0)),
+        line(tr!("Vision/min über deinem Schnitt", "vision/min above your average"), &|g| Some(vis(g)? > vis_median?)),
+        line(tr!("höchstens 5 Tode", "at most 5 deaths"), &|g| Some(g.d <= 5)),
         // Zusatzfelder erst ab Erweiterung 1 bekannt
-        line("an First Blood beteiligt", &|g| (g.part.ext >= PART_EXT).then(|| g.part.first_blood || g.part.fb_assist)),
-        line("am ersten Turm beteiligt", &|g| (g.part.ext >= PART_EXT).then_some(g.part.first_tower)),
-        line("Gold/min über Elo-Schnitt des Champions", &|g| {
+        line(tr!("an First Blood beteiligt", "involved in first blood"), &|g| (g.part.ext >= PART_EXT).then(|| g.part.first_blood || g.part.fb_assist)),
+        line(tr!("am ersten Turm beteiligt", "involved in first tower"), &|g| (g.part.ext >= PART_EXT).then_some(g.part.first_tower)),
+        line(tr!("Gold/min über Elo-Schnitt des Champions", "gold/min above the champion's elo average"), &|g| {
             let (avg, _) = gpm.get(&g.champ)?;
             (g.mins > 0.0).then(|| g.part.gold as f64 / g.mins > *avg)
         }),
