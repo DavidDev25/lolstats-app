@@ -1,0 +1,6 @@
+# Nur fuer die GNU-Toolchain (MinGW, z. B. w64devkit im PATH). Mit der MSVC-Toolchain wird nichts davon gebraucht.
+# w64devkit bindet libgcc statisch ein; .cargo\gnu-shim\libgcc_eh.a ist ein leerer Platzhalter fuer rustc.
+# Den Suchpfad dafuer setzt tools\release.ps1 automatisch. Von Hand:
+#   $env:RUSTFLAGS = "-L native=$PWD/.cargo/gnu-shim -Cdlltool=dlltool"
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
