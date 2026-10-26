@@ -70,11 +70,13 @@ pub fn riot_name(p: &Value) -> String {
             return if tl.is_empty() { gn } else { format!("{gn}#{tl}") };
         }
     }
+    // versteckte Namen kommen als "#" bzw. leerer Name mit Tag – dann lieber gar keinen Namen
     let r = js(p, "riotId");
-    if !r.is_empty() {
+    if !r.trim_start_matches('#').is_empty() && !r.starts_with('#') {
         return r;
     }
-    js(p, "summonerName")
+    let s = js(p, "summonerName");
+    if s.starts_with('#') { String::new() } else { s }
 }
 
 pub fn ago(ts_ms: i64) -> String {
@@ -485,6 +487,47 @@ pub struct Lobby {
     pub players: Vec<LivePlayer>,
     /// Spiel wurde geremaked (unter 5 min) – zählt nicht als Matchmaking-Messpunkt
     pub remake: bool,
+    /// Riots LP-Meldung nach dem Spiel (Bonus wie Autofill-Schutz, Verlustschutz)
+    pub lp_note: Option<LpNote>,
+    /// im Champ Select erkannt: zugewiesene Position war keine Wunschposition
+    pub autofill: bool,
+}
+
+/// Niederlage auf genau 0 LP mit weniger Abzug als das gilt als gekappt (Abstiegsschutz);
+/// 20 -> 0 ist dagegen eine volle Niederlage.
+pub const CAPPED_LOSS: i32 = 15;
+
+/// Aus /lol-ranked/v1/current-lp-change-notification: warum die LP vom Normalfall abweichen.
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+#[serde(default)]
+pub struct LpNote {
+    pub delta: i32,
+    /// lpBonusAppliedReason, z. B. "AUTOFILL_AEGIS" (leer = kein Bonus)
+    pub bonus: String,
+    /// consolationLpUsed: LP, die Riot beim Verlust erlassen hat (AFK-Mitspieler)
+    pub consolation: i32,
+    /// du selbst warst AFK/Leaver
+    pub was_afk: bool,
+}
+
+impl LpNote {
+    pub fn from_lcu(v: &serde_json::Value) -> Option<(u64, LpNote)> {
+        let gid = v["gameId"].as_u64()?;
+        Some((
+            gid,
+            LpNote {
+                delta: v["leaguePointsDelta"].as_i64().unwrap_or(0) as i32,
+                bonus: v["lpBonusAppliedReason"].as_str().unwrap_or("").to_string(),
+                consolation: v["consolationLpUsed"].as_i64().unwrap_or(0) as i32,
+                was_afk: v["wasAfkOrLeaver"].as_bool().unwrap_or(false),
+            },
+        ))
+    }
+
+    /// LP sind durch einen Riot-Bonus/-Schutz verändert -> kein normales Spiel für LP-Auswertungen
+    pub fn modified(&self) -> bool {
+        !self.bonus.is_empty() || self.consolation > 0
+    }
 }
 
 impl Lobby {
@@ -874,6 +917,19 @@ mod tests {
         assert_eq!(p("JUNGLE", "NONE", false).position(), "");
         assert_eq!(p("MIDDLE", "SOLO", true).position(), "JUNGLE");
         assert_eq!(p("TOP", "SOLO", false).position(), "TOP");
+    }
+
+    #[test]
+    fn lp_note_from_client() {
+        // echte Meldung (gekürzt): Sieg mit Autofill-Schutz, +42 LP
+        let v = serde_json::json!({"afkLpPenaltyAmount":0,"consolationLpUsed":0,"gameId":8024344091u64,"leaguePointsDelta":42,
+            "lpBonusAppliedReason":"AUTOFILL_AEGIS","wasAfkOrLeaver":false,"queueType":"RANKED_SOLO_5x5"});
+        let (gid, n) = LpNote::from_lcu(&v).unwrap();
+        assert_eq!((gid, n.delta, n.bonus.as_str(), n.consolation), (8024344091, 42, "AUTOFILL_AEGIS", 0));
+        assert!(n.modified());
+        let plain = LpNote::from_lcu(&serde_json::json!({"gameId":1,"leaguePointsDelta":-20,"lpBonusAppliedReason":""})).unwrap().1;
+        assert!(!plain.modified());
+        assert!(LpNote::from_lcu(&serde_json::json!({})).is_none()); // 204 ohne Inhalt
     }
 
     #[test]

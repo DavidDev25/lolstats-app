@@ -13,8 +13,14 @@ pub struct LabRow {
     pub delta: i32,
     /// Niederlage ohne LP-Verlust (Abstiegsschutz)
     pub shield: bool,
+    /// Riot hat Bonus-LP gegeben (z. B. Autofill-Schutz) – kein normales Spiel für LP-Auswertungen
+    pub bonus: bool,
+    /// Autofill im Champ Select erkannt (Bonus war vorher absehbar)
+    pub autofill: bool,
     pub rank_before: i32,
     pub rank_after: i32,
+    /// LP in der Division vor dem Spiel (für gekappte Niederlagen)
+    pub lp_before: i32,
     pub lobby: Option<i32>,
     pub team: Option<i32>,
     pub enemy: Option<i32>,
@@ -23,6 +29,8 @@ pub struct LabRow {
 }
 
 impl LabRow {
+
+
 }
 
 #[derive(Clone, Debug, Default)]
@@ -76,9 +84,14 @@ pub fn build(lobbies: &[Lobby], snaps: &[LpSnap]) -> Lab {
             ts: snaps[i].ts,
             win,
             delta,
-            shield: !win && delta == 0,
+            // 0 LP verloren, deutlich gekappt (auf 0 LP mit kleinem Abzug) oder abgestiegen (Riot setzt dann
+            // auf 75 LP): Riots Regeln, keine normale Niederlage. 20 -> 0 ist dagegen eine volle Niederlage.
+            shield: !win && (delta == 0 || (post.rank.lp == 0 && delta > -CAPPED_LOSS) || pre.rank.lp == 0),
+            bonus: lb.and_then(|l| l.lp_note.as_ref()).is_some_and(|n| !n.bonus.is_empty()),
+            autofill: lb.is_some_and(|l| l.autofill),
             rank_before: a,
             rank_after: b,
+            lp_before: pre.rank.lp,
             lobby: lb.and_then(|l| l.avg_others()),
             team: lb.and_then(|l| stats::team_avg(l, my_team)),
             enemy: lb.and_then(|l| stats::team_avg(l, if my_team == 200 { 100 } else { 200 })),
@@ -105,6 +118,9 @@ pub fn build(lobbies: &[Lobby], snaps: &[LpSnap]) -> Lab {
     let (mut gains, mut losses) = (Vec::new(), Vec::new());
     for r in &rows {
         total.add(r.win);
+        if r.bonus {
+            continue;
+        }
         if r.win {
             gains.push(r.delta as f64);
         } else if !r.shield {
@@ -199,6 +215,7 @@ pub fn csv(lab: &Lab) -> String {
     }
     out
 }
+
 
 
 

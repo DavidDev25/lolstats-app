@@ -51,6 +51,8 @@ pub struct RunePage {
 
 pub struct Build {
     pub champ: i32,
+    /// angefragte Rolle (leer = häufigste) – zum Erkennen, ob neu gerechnet werden muss
+    pub lane_req: String,
     pub patch: String,
     pub total: Agg,
     pub page: Option<(RunePage, Agg)>,
@@ -87,14 +89,38 @@ fn most_played<K: Clone + Eq + Hash>(map: &HashMap<K, Agg>) -> Option<(K, Agg)> 
         .map(|(k, v)| (k.clone(), *v))
 }
 
+/// Ein Keystone braucht mindestens so viele Spiele bzw. diesen Anteil, bevor seine Winrate zählt
+/// (sonst gewinnt z. B. Dark Harvest auf Ashe mit 3 von 4 Support-Spielen gegen Lethal Tempo).
+const KEYSTONE_MIN_GAMES: i32 = 10;
+const KEYSTONE_MIN_SHARE: f64 = 0.10;
+/// Ab so vielen Spielen auf der Rolle wird nur die Rolle ausgewertet.
+const BUILD_ROLE_MIN: usize = 15;
+
+/// `lane` = Rolle wie LANES ("ADC" …); leer = häufigste Rolle des Champions.
 /// `completed` = fertiges Item, `boots` = Schuhe (werden gesondert ausgewertet).
-pub fn build_for(ms: &[Match], champ: i32, completed: &dyn Fn(i32) -> bool, boots: &dyn Fn(i32) -> bool) -> Build {
+pub fn build_for(ms: &[Match], champ: i32, lane: &str, completed: &dyn Fn(i32) -> bool, boots: &dyn Fn(i32) -> bool) -> Build {
     let patch = latest_patch(ms);
     let mut parts = sample(ms, champ, Some(&patch));
     let mut label = format!("Patch {patch}");
     if parts.len() < 15 {
         parts = sample(ms, champ, None);
-        label = "alle Patches".into();
+        label = tr!("alle Patches", "all patches").into();
+    }
+    // nur die Rolle: Ashe ADC und Ashe Support spielen völlig andere Runen und Items
+    let lane_req = lane;
+    let lane = if lane.is_empty() {
+        let mut n: HashMap<&'static str, usize> = HashMap::new();
+        for p in &parts {
+            *n.entry(p.position()).or_default() += 1;
+        }
+        n.into_iter().filter(|(l, _)| !l.is_empty()).max_by_key(|&(l, c)| (c, l)).map(|x| x.0).unwrap_or("")
+    } else {
+        lane
+    };
+    let role: Vec<&Part> = parts.iter().copied().filter(|p| p.position() == lane).collect();
+    if !lane.is_empty() && role.len() >= BUILD_ROLE_MIN {
+        parts = role;
+        label = format!("{label} · {}", position_label(lane));
     }
     let mut total = Agg::default();
     let mut keystones: HashMap<i32, Agg> = HashMap::new();
@@ -120,9 +146,13 @@ pub fn build_for(ms: &[Match], champ: i32, completed: &dyn Fn(i32) -> bool, boot
             }
         }
     }
-    // Keystone nach Winrate (Wilson), dann die häufigste komplette Seite mit diesem Keystone.
+    // Keystone nach Winrate (Wilson) unter den oft genug gespielten, dann die häufigste komplette Seite damit.
+    // bei wenigen Spielen höchstens ein Drittel verlangen, damit überhaupt eine Seite übrig bleibt
+    let n = parts.len() as i32;
+    let min_ks = ((n as f64 * KEYSTONE_MIN_SHARE).ceil() as i32).max(KEYSTONE_MIN_GAMES.min((n + 2) / 3));
     let page = keystones
         .iter()
+        .filter(|(_, a)| a.games >= min_ks)
         .max_by(|a, b| {
             a.1.score()
                 .partial_cmp(&b.1.score())
@@ -142,7 +172,7 @@ pub fn build_for(ms: &[Match], champ: i32, completed: &dyn Fn(i32) -> bool, boot
     let mut items: Vec<(i32, Agg)> = items.into_iter().collect();
     items.sort_by(|a, b| b.1.games.cmp(&a.1.games).then(a.0.cmp(&b.0)));
     items.truncate(10);
-    Build { champ, patch: label, total, page, spells: most_played(&spells), items, boots: most_played(&shoes) }
+    Build { champ, lane_req: lane_req.to_string(), patch: label, total, page, spells: most_played(&spells), items, boots: most_played(&shoes) }
 }
 
 /// Runen gegen einen bestimmten Lane-Gegner im Vergleich zu allen Spielen des Champions.
@@ -389,7 +419,7 @@ mod tests {
         for i in 10..14 {
             ms.push(game(i, vec![part(145, false, 8021, [3031, 0, 0, 0, 0, 0, 0])]));
         }
-        let b = build_for(&ms, 145, &|id| id == 3031 || id == 1001, &|id| id == 1001);
+        let b = build_for(&ms, 145, "", &|id| id == 3031 || id == 1001, &|id| id == 1001);
         // 1001 zählt hier als Schuh: getrennt ausgewiesen, nicht in der Item-Liste
         assert_eq!(b.boots, Some((1001, Agg { games: 10, wins: 8 })));
         assert_eq!(b.total.games, 14);
@@ -399,6 +429,31 @@ mod tests {
         assert_eq!(b.items, vec![(3031, Agg { games: 14, wins: 8 })]);
         assert_eq!(b.spells.unwrap().0, [4, 7]);
         assert_eq!(b.patch, "alle Patches"); // < 15 Spiele auf dem Patch
+    }
+
+    #[test]
+    fn build_uses_role_and_ignores_rare_keystones() {
+        // Ashe: 40 ADC-Spiele Lethal Tempo (50 %), 4 Support-Spiele Dark Harvest (3 Siege), 20 Support Comet
+        let adc = |win: bool, ks: i32| Part { lane: "BOTTOM".into(), role: "CARRY".into(), ..part(22, win, ks, [3031, 0, 0, 0, 0, 0, 0]) };
+        let sup = |win: bool, ks: i32| Part { lane: "BOTTOM".into(), role: "SUPPORT".into(), ..part(22, win, ks, [3869, 0, 0, 0, 0, 0, 0]) };
+        let mut ms = Vec::new();
+        for i in 0..40 {
+            ms.push(game(i, vec![adc(i % 2 == 0, 8008)]));
+        }
+        for i in 40..44 {
+            ms.push(game(i, vec![adc(i != 40, 8128)])); // selten, aber 75 % WR
+        }
+        for i in 44..64 {
+            ms.push(game(i, vec![sup(i % 2 == 0, 8229)]));
+        }
+        let b = build_for(&ms, 22, "", &|_| true, &|_| false);
+        assert_eq!(b.page.unwrap().0.perks[0], 8008, "seltene Keystones mit Glücks-Winrate zählen nicht");
+        assert!(b.patch.ends_with("ADC"), "{}", b.patch); // häufigste Rolle
+        assert_eq!(b.total.games, 44);
+        assert!(b.items.iter().all(|(id, _)| *id != 3869)); // kein Support-Item im ADC-Build
+        let s = build_for(&ms, 22, "SUPPORT", &|_| true, &|_| false);
+        assert_eq!(s.page.unwrap().0.perks[0], 8229);
+        assert_eq!(s.lane_req, "SUPPORT");
     }
 
     #[test]

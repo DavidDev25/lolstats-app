@@ -81,6 +81,9 @@ struct Worker<'a> {
     phase: String,
     state: LiveState,
     cs_lobby: bool,
+    /// Wunschpositionen aus der Lobby (erste, zweite) und Autofill-Urteil des aktuellen Champ Selects
+    pos_prefs: Option<(String, String)>,
+    cs_autofill: bool,
     /// Champion -> Lane-Häufigkeiten für die Lane-Erkennung; einmal aus der DB gezählt,
     /// danach bei jedem neuen Match ergänzt (kein erneutes Lesen aller Matches)
     lane_freq: Option<LaneFreq>,
@@ -92,6 +95,8 @@ struct Worker<'a> {
     last_snap: Option<Rank>,
     /// letzte Abfrage für den CS-Tacho
     last_cs: Option<Instant>,
+    /// letzter Versuch, eine unvollständige Lobby zu ergänzen
+    last_repair: Option<Instant>,
     /// älterer eigener Verlauf: noch abzufragende Seiten (Start-Index) und gefundene, unbekannte Spiele
     own_pages: VecDeque<usize>,
     own_old: VecDeque<u64>,
@@ -171,6 +176,8 @@ impl<'a> Worker<'a> {
             phase: String::new(),
             state: analysis::without_off_modes(store.read(STATE).unwrap_or_default()),
             cs_lobby: false,
+            pos_prefs: None,
+            cs_autofill: false,
             lane_freq: None,
             lane_freq_ver: -1,
             lobby_game: pending.as_ref().map_or(0, |p| p.game_id),
@@ -178,6 +185,7 @@ impl<'a> Worker<'a> {
             pending,
             last_snap: snaps.last().map(|s| s.rank.clone()),
             last_cs: None,
+            last_repair: None,
             // die ersten 50 holt init_me, danach Seite für Seite bis BACKFILL_MAX
             own_pages: (OWN_PAGE..BACKFILL_MAX).step_by(OWN_PAGE).collect(),
             own_old: VecDeque::new(),
@@ -294,6 +302,10 @@ impl<'a> Worker<'a> {
                 }
             };
             if phase != self.phase {
+                // Positionswünsche merken, solange die Lobby sie noch kennt (für die Autofill-Erkennung)
+                if phase == "Matchmaking" || (phase == "ChampSelect" && self.pos_prefs.is_none()) {
+                    self.read_pos_prefs(&l);
+                }
                 self.on_phase(&phase);
             }
             let ingame = matches!(phase.as_str(), "GameStart" | "InProgress" | "Reconnect");
@@ -334,6 +346,26 @@ impl<'a> Worker<'a> {
         }
     }
 
+    /// Erste/zweite Wunschposition aus der Lobby (z. B. "MIDDLE", "BOTTOM", "FILL").
+    fn read_pos_prefs(&mut self, l: &Lcu) {
+        if let Ok(v) = l.get("/lol-lobby/v2/lobby") {
+            let m = &v["localMember"];
+            let (a, b) = (js(m, "firstPositionPreference"), js(m, "secondPositionPreference"));
+            if !a.is_empty() {
+                self.pos_prefs = Some((a, b));
+            }
+        }
+    }
+
+    /// Autofill: zugewiesene Position ist keine der Wunschpositionen (wer selbst "Fill" wählt, zählt nicht).
+    fn is_autofill(&self, assigned: &str) -> Option<bool> {
+        let (a, b) = self.pos_prefs.as_ref()?;
+        if assigned.is_empty() || a.eq_ignore_ascii_case("FILL") || b.eq_ignore_ascii_case("FILL") {
+            return None;
+        }
+        Some(!a.eq_ignore_ascii_case(assigned) && !b.eq_ignore_ascii_case(assigned))
+    }
+
     fn on_phase(&mut self, phase: &str) {
         self.log(&format!("Phase {} -> {}", self.phase, phase));
         if phase == "ChampSelect" {
@@ -369,7 +401,24 @@ impl<'a> Worker<'a> {
         if let Some(r) = self.snapshot(l) {
             tray::set_tip(&format!("lolstats · {}", r.label()));
         }
+        self.seed_crawl();
         true
+    }
+
+    /// Crawler-Warteschlange aus den gespeicherten eigenen Spielen füllen – sonst bliebe sie nach einem
+    /// Neustart leer, bis ein neues eigenes Spiel dazukommt (sync_own reiht nur neue Matches ein).
+    fn seed_crawl(&mut self) {
+        let my = self.me.as_ref().map(|x| x.puuid.clone()).unwrap_or_default();
+        for m in &self.own_recent {
+            for p in &m.ps {
+                if p.puuid != my && !p.puuid.is_empty() && self.crawl_players.len() < 300 && self.seen_players.insert(p.puuid.clone()) {
+                    self.crawl_players.push_back(p.puuid.clone());
+                }
+            }
+        }
+        if !self.crawl_players.is_empty() {
+            self.log(&format!("Crawler: {} Spieler aus deinen letzten Spielen eingereiht", self.crawl_players.len()));
+        }
     }
 
     fn refresh_names(&mut self, l: &Lcu) {
@@ -758,6 +807,9 @@ impl<'a> Worker<'a> {
             if a > 0 || b > 0 { Some(a == 11 || b == 11) } else { None }
         };
         if !self.cs_lobby {
+            if cell < 0 {
+                return; // Sitzung noch nicht bereit
+            }
             self.cs_lobby = true;
             let queue = l
                 .get("/lol-gameflow/v1/session")
@@ -810,9 +862,27 @@ impl<'a> Worker<'a> {
                 });
             }
             self.fill_lanes(&mut players, queue);
-            self.state.lobby = Some(Lobby { game_id: 0, ts: now_ms(), queue, champ_select: true, players, ..Default::default() });
+            // Autofill: zugewiesene Position gegen die Wunschpositionen aus der Lobby
+            let assigned = players.iter().find(|p| p.me).map(|p| p.position.clone()).unwrap_or_default();
+            let autofill = self.is_autofill(&assigned);
+            self.cs_autofill = autofill == Some(true);
+            let (a, b) = self.pos_prefs.clone().unwrap_or_default();
+            self.log(&format!("Champ Select: zugewiesen „{assigned}“, Wünsche „{a}“/„{b}“ -> Autofill {autofill:?}"));
+            // unbekannter Endpunkt, Inhalt einmal protokollieren (zum Auswerten)
+            if let Ok(v) = l.get("/lol-summoner/v1/current-summoner/autofill") {
+                self.log(&format!("Autofill-Endpunkt: {}", v.to_string().chars().take(400).collect::<String>()));
+            }
+            self.state.lobby = Some(Lobby { game_id: 0, ts: now_ms(), queue, champ_select: true, players, autofill: self.cs_autofill, ..Default::default() });
             self.save_state();
         } else {
+            // eigene Zelle hat sich geändert (Positions-/Pick-Tausch oder anfangs falsch gemeldet):
+            // Lobby im nächsten Tick neu aufbauen, sonst klebt "ich" am alten Platz
+            let my_cell = self.state.lobby.as_ref().and_then(|lb| lb.players.iter().find(|p| p.me)).map(|p| p.cell);
+            if cell >= 0 && my_cell.is_some_and(|c| c != Some(cell)) {
+                self.log(&format!("Champ Select: eigene Zelle {my_cell:?} -> {cell}, Lobby neu aufgebaut"));
+                self.cs_lobby = false;
+                return;
+            }
             let mut changed = false;
             if let Some(lb) = self.state.lobby.as_mut() {
                 // nach Zellen-ID zuordnen, nicht nach Reihenfolge (die ändert sich beim Tauschen)
@@ -919,12 +989,73 @@ impl<'a> Worker<'a> {
         }
     }
 
+    /// Spieler ohne ID oder Namen (Riot lässt manche in der Teamliste weg und anonymisiert sie in der
+    /// Live-API): ID über die Pick-Liste der Sitzung (Champion -> PUUID), Name über das Beschwörerprofil.
+    fn fill_from_selections(&mut self, l: &Lcu, gd: &Value, players: &mut [LivePlayer]) {
+        let sel: Vec<(i32, String)> = arr(&gd["playerChampionSelections"]).iter().map(|s| (ji(s, "championId"), js(s, "puuid"))).collect();
+        for p in players.iter_mut().filter(|p| p.champ > 0) {
+            if p.puuid.is_empty() {
+                // nur eindeutige Zuordnung (gleicher Champion in beiden Teams ist im Draft unmöglich, sicher ist sicher)
+                let mut it = sel.iter().filter(|(c, id)| *c == p.champ && !id.is_empty());
+                if let (Some((_, id)), None) = (it.next(), it.next()) {
+                    p.puuid = id.clone();
+                }
+            }
+            if p.name.is_empty() && !p.puuid.is_empty() {
+                if let Ok(s) = l.get(&format!("/lol-summoner/v2/summoners/puuid/{}", p.puuid)) {
+                    p.name = riot_name(&s);
+                }
+            }
+        }
+    }
+
+    /// Lobby schon erfasst, aber unvollständig (z. B. nach 90 s nur 9 Spieler oder nach Neustart mitten im
+    /// Spiel): höchstens alle 30 s die fehlenden Spieler aus der Live-Spiel-API nachtragen.
+    fn repair_lobby(&mut self, l: &Lcu, gid: u64) {
+        let Some(lb) = self.state.lobby.as_ref().filter(|lb| lb.game_id == gid && !lb.champ_select) else { return };
+        let complete = lb.players.len() >= 10 && lb.players.iter().all(|p| !p.puuid.is_empty());
+        if complete || self.last_repair.is_some_and(|t| t.elapsed() < Duration::from_secs(30)) {
+            return;
+        }
+        self.last_repair = Some(Instant::now());
+        let (queue, before) = (lb.queue, lb.players.len());
+        let mut players = lb.players.clone();
+        let missing_id: Vec<i32> = players.iter().filter(|p| p.puuid.is_empty()).map(|p| p.champ).collect();
+        self.resolve_from_live(l, &mut players);
+        if let Ok(sess) = l.get("/lol-gameflow/v1/session") {
+            self.fill_from_selections(l, &sess["gameData"], &mut players);
+        }
+        // neu hinzugekommen oder jetzt erst mit ID: Rang und Verlauf holen
+        let mut fixed = 0;
+        for (i, p) in players.iter_mut().enumerate() {
+            if (i >= before || missing_id.contains(&p.champ)) && !p.puuid.is_empty() {
+                self.fill_player(l, p);
+                fixed += 1;
+            }
+        }
+        if players.len() <= before && fixed == 0 {
+            return;
+        }
+        self.live_lanes(&mut players);
+        self.fill_lanes(&mut players, queue);
+        self.log(&format!("Lobby {gid}: fehlende Spieler/IDs aus Live-Spiel und Pick-Liste ergänzt ({before} -> {} Spieler, {fixed} neu eingelesen)", players.len()));
+        self.store.set_lobby_players(gid, &players);
+        if let Some(lb) = self.state.lobby.as_mut() {
+            lb.players = players;
+        }
+        self.save_state();
+    }
+
     /// Ladebildschirm/Spiel: einmal pro Spiel alle 10 Spieler einlesen.
     fn tick_game(&mut self, l: &Lcu) {
         let Ok(sess) = l.get("/lol-gameflow/v1/session") else { return };
         let gd = &sess["gameData"];
         let gid = gd["gameId"].as_u64().unwrap_or(0);
-        if gid == 0 || gid == self.lobby_game {
+        if gid == 0 {
+            return;
+        }
+        if gid == self.lobby_game {
+            self.repair_lobby(l, gid);
             return;
         }
         let first_seen = match self.game_seen {
@@ -957,8 +1088,10 @@ impl<'a> Worker<'a> {
                 });
             }
         }
-        if players.is_empty() || players.iter().any(|p| p.puuid.is_empty()) {
+        // fehlende IDs oder fehlende Spieler (Riot liefert manchmal nur 9): aus der Live-Spiel-API ergänzen
+        if players.is_empty() || players.len() < 10 || players.iter().any(|p| p.puuid.is_empty()) {
             self.resolve_from_live(l, &mut players);
+            self.fill_from_selections(l, gd, &mut players);
         }
         let unresolved = players.iter().filter(|p| p.puuid.is_empty()).count();
         // 5v5: auf alle 10 warten (ein Spieler fehlt manchmal noch in den Sitzungsdaten, z. B. beim Laden)
@@ -986,6 +1119,8 @@ impl<'a> Worker<'a> {
         if analysis::queue_has_lanes(queue) {
             self.log_lanes(&players);
         }
+        let autofill = std::mem::take(&mut self.cs_autofill);
+        // Autofill-Schutz (AUTOFILL_AEGIS): bisher 1 Datenpunkt, Sieg brachte das Doppelte (+42 statt +20)
         let lobby = Lobby {
             game_id: gid,
             ts: now_ms(),
@@ -993,6 +1128,8 @@ impl<'a> Worker<'a> {
             champ_select: false,
             players,
             remake: false,
+            lp_note: None,
+            autofill,
         };
         let avg = lobby.avg_others().map(value_label).unwrap_or_else(|| "-".into());
         self.log(&format!("Lobby {gid} ({}) erfasst, Schnitt: {avg}", queue_name(queue)));
@@ -1048,14 +1185,30 @@ impl<'a> Worker<'a> {
         if remake {
             self.store.mark_remake(gid);
         }
+        // Riots LP-Meldung: Bonus (z. B. Autofill-Schutz) oder erlassene LP (AFK-Mitspieler) merken
+        if ranked {
+            if let Some((ngid, note)) = l.get("/lol-ranked/v1/current-lp-change-notification").ok().and_then(|v| LpNote::from_lcu(&v)) {
+                if ngid == gid {
+                    if note.modified() || note.was_afk {
+                        self.log(&format!(
+                            "LP-Meldung {gid}: {:+} LP, Bonus „{}“, erlassen {} LP, selbst AFK: {}",
+                            note.delta, note.bonus, note.consolation, note.was_afk
+                        ));
+                    }
+                    self.store.set_lp_note(gid, &note);
+                }
+            }
+        }
         let delta = match (&pre, &now) {
             (Some(a), Some(b)) if lp_changed => Some(b.value().unwrap_or(0) - a.value().unwrap_or(0)),
             _ => None,
         };
         // Niederlage ohne LP-Abzug: häufig Riots Verlustschutz, weil ein Mitspieler AFK war
+        let demotion_shield = pre.as_ref().is_some_and(|r| r.lp == 0);
         if ranked && win == Some(false) && matches!(delta, None | Some(0)) {
             let afk = my_match.as_ref().and_then(|m| m.afk_teammate(&me.puuid));
             self.state.note = match afk {
+                _ if demotion_shield => tr!("Abstiegsschutz: Du warst schon auf 0 LP – deshalb kein Abzug.", "Demotion shield: you were already at 0 LP – that's why no LP were lost.").into(),
                 Some(p) => trf!(
                     "Verlustschutz: {} war vermutlich AFK ({} Gold, Level {}, {} CS) – deshalb kein LP-Abzug.", "Loss protection: {} was probably AFK ({} gold, level {}, {} CS) – that's why no LP were lost.",
                     self.names.champ(p.champ),

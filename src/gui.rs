@@ -146,6 +146,8 @@ struct App {
     update_mtime: Option<SystemTime>,
     /// zuletzt berechnete Matchup-Runen: ((Champion, Gegner, Matches), Ergebnis)
     matchup_runes: std::cell::RefCell<Option<((i32, i32, usize), stats::MatchupRunes)>>,
+    /// zuletzt berechnete Lane-Duelle: ((Gegner, Lane, Matches), Bilanz je Champion)
+    duels: std::cell::RefCell<Option<((i32, String, usize), std::collections::HashMap<i32, Agg>)>>,
     /// Rückmeldung des Matchup-Runen-Imports
     matchup_msg: std::cell::RefCell<String>,
     style: Option<Style>,
@@ -329,6 +331,7 @@ impl App {
             update: Default::default(),
             update_mtime: None,
             matchup_runes: Default::default(),
+            duels: Default::default(),
             matchup_msg: Default::default(),
             timelines: Vec::new(),
             comps: CompStats::default(),
@@ -506,10 +509,16 @@ impl App {
         }
         // Champ Select: Build für den eigenen Champion vorbereiten und nach dem Lock einmal auf "Live" wechseln
         if files.contains(&STATE) || tables.contains(&Table::Matches) {
-            let mine = self.state.lobby.as_ref().and_then(|lb| lb.players.iter().find(|p| p.me).map(|p| (lb.ts, lb.champ_select, p.champ, p.locked)));
-            if let Some((key, cs, champ, locked)) = mine {
-                if champ > 0 && (tables.contains(&Table::Matches) || self.live_build.as_ref().map_or(true, |b| b.champ != champ)) {
-                    self.live_build = Some(self.build_of(champ));
+            let mine = self
+                .state
+                .lobby
+                .as_ref()
+                .and_then(|lb| lb.players.iter().find(|p| p.me).map(|p| (lb.ts, lb.champ_select, p.champ, p.locked, p.lane.clone())));
+            if let Some((key, cs, champ, locked, lane)) = mine {
+                // neu rechnen bei neuem Champion oder neuer Rolle (Ashe ADC ≠ Ashe Support)
+                let stale = self.live_build.as_ref().map_or(true, |b| b.champ != champ || b.lane_req != lane);
+                if champ > 0 && (tables.contains(&Table::Matches) || stale) {
+                    self.live_build = Some(self.build_of(champ, &lane));
                 }
                 if cs && locked && champ > 0 && self.auto_pick != (key, champ) {
                     self.auto_pick = (key, champ);
@@ -562,18 +571,19 @@ impl App {
     fn select_champ(&mut self, c: i32) {
         self.sel_champ = c;
         self.msg.clear();
-        self.build = Some(self.build_of(c));
+        self.build = Some(self.build_of(c, ""));
     }
 
-    /// Build eines Champions aus allen Matches bzw. (Schalter im Builds-Tab) nur nahe der eigenen Elo.
-    fn build_of(&self, c: i32) -> Build {
+    /// Build eines Champions aus allen Matches bzw. (Schalter im Builds-Tab) nur nahe der eigenen Elo,
+    /// für die Rolle `lane` (leer = häufigste Rolle des Champions).
+    fn build_of(&self, c: i32, lane: &str) -> Build {
         let names = &self.names;
         if self.build_near_elo {
             let mine = self.snaps.last().and_then(|s| s.rank.value());
             let near: Vec<Match> = self.matches.iter().filter(|m| analysis::near_elo(m, mine, ELO_SPAN)).cloned().collect();
-            stats::build_for(&near, c, &|id| names.completed(id), &|id| names.is_boots(id))
+            stats::build_for(&near, c, lane, &|id| names.completed(id), &|id| names.is_boots(id))
         } else {
-            stats::build_for(&self.matches, c, &|id| names.completed(id), &|id| names.is_boots(id))
+            stats::build_for(&self.matches, c, lane, &|id| names.completed(id), &|id| names.is_boots(id))
         }
     }
 
@@ -736,6 +746,9 @@ impl App {
             ))
             .strong(),
         );
+        if lb.autofill {
+            ui.label(RichText::new(tr!("Autofill erkannt – Riots Autofill-Schutz gibt bei einem Sieg Bonus-LP.", "Autofill detected – Riot's autofill protection grants bonus LP on a win.")).color(GOLD));
+        }
         if !lb.champ_select {
             self.ui_cs_tacho(ui, lb);
         }
@@ -944,12 +957,13 @@ impl App {
                     );
                 }
             }
-            if me.champ > 0 {
-                if let Some(a) = self.matchups.get(&(me.champ, opp.champ)).filter(|a| a.games > 0) {
+            // nur direkte Lane-Duelle (1v1) – "irgendwo im Gegnerteam" würde das Bild verfälschen
+            if me.champ > 0 && !me.lane.is_empty() {
+                if let Some(a) = self.lane_duels(opp.champ, &me.lane).get(&me.champ).filter(|a| a.games > 0) {
                     facts.push(wr_text(
                         a.wins,
                         a.games,
-                        trf!("{} gegen {cname} (alle gesammelten Matches): {} Spiele, {}", "{} vs {cname} (all collected matches): {} games, {}", self.names.champ(me.champ), a.games, pct(a)),
+                        trf!("{} gegen {cname} im direkten Lane-Duell (gesammelte Matches): {} Spiele, {}", "{} vs {cname} in direct lane matchups (collected matches): {} games, {}", self.names.champ(me.champ), a.games, pct(a)),
                     ));
                 }
             }
@@ -961,6 +975,17 @@ impl App {
             }
         });
     }
+
+    /// Lane-Duelle gegen `opp` auf `lane` (zwischengespeichert, bis neue Matches dazukommen).
+    fn lane_duels(&self, opp: i32, lane: &str) -> std::collections::HashMap<i32, Agg> {
+        let key = (opp, lane.to_string(), self.matches.len());
+        let mut cache = self.duels.borrow_mut();
+        if cache.as_ref().map(|c| &c.0) != Some(&key) {
+            *cache = Some((key, analysis::lane_duels(&self.matches, opp, lane)));
+        }
+        cache.as_ref().unwrap().1.clone()
+    }
+
 
     /// Runen, die mit deinem Champion gegen genau diesen Gegner deutlich häufiger gewählt werden.
     fn ui_matchup_runes(&self, ui: &mut egui::Ui, champ: i32, opp: i32) {
@@ -1151,6 +1176,7 @@ impl App {
         let wr = |w: usize, g: usize| if g > 0 { format!("{:.0} % ({w}/{g})", w as f64 * 100.0 / g as f64) } else { "-".into() };
         ui.label(trf!("Deine Siegchance mit Offmeta-Pick im Team: {} · ohne: {}", "Your win rate with an off-meta pick on your team: {} · without: {}", wr(ww, wg), wr(ow, og)));
     }
+
 
 
 

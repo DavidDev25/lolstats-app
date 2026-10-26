@@ -288,6 +288,26 @@ impl Store {
         self.bump(Table::Lobbies);
     }
 
+    /// Ersetzt die Spieler einer erfassten Lobby (nachgetragene fehlende Spieler).
+    pub fn set_lobby_players(&self, game_id: u64, ps: &[LivePlayer]) {
+        let Ok(js) = serde_json::to_string(ps) else { return };
+        let _ = self.db.execute(
+            "UPDATE lobbies SET data = json_set(data, '$.players', json(?2)) WHERE game_id = ?1",
+            params![game_id as i64, js],
+        );
+        self.bump(Table::Lobbies);
+    }
+
+    /// Hängt Riots LP-Meldung nachträglich an die Lobby eines Spiels.
+    pub fn set_lp_note(&self, game_id: u64, n: &LpNote) {
+        let Ok(js) = serde_json::to_string(n) else { return };
+        let _ = self.db.execute(
+            "UPDATE lobbies SET data = json_set(data, '$.lp_note', json(?2)) WHERE game_id = ?1",
+            params![game_id as i64, js],
+        );
+        self.bump(Table::Lobbies);
+    }
+
     pub fn add_snap(&self, s: &LpSnap) {
         let r = &s.rank;
         let _ = self.db.execute(

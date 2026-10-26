@@ -842,6 +842,21 @@ pub fn matchups(ms: &[Match]) -> Matchups {
     mu
 }
 
+
+/// Bilanz jedes Champions auf `lane` gegen `opp` als direkten Lane-Gegner (1v1, nicht "irgendwo im Gegnerteam").
+pub fn lane_duels(ms: &[Match], opp: i32, lane: &str) -> HashMap<i32, Agg> {
+    let mut c: HashMap<i32, Agg> = HashMap::new();
+    for m in ms.iter().filter(|m| SR_QUEUES.contains(&m.queue) && !m.remake() && m.ps.len() == 10) {
+        for p in m.ps.iter().filter(|p| p.champ != opp && p.position() == lane) {
+            if m.opponent(&p.puuid).is_some_and(|o| o.champ == opp) {
+                c.entry(p.champ).or_default().add(p.win);
+            }
+        }
+    }
+    c
+}
+
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Rec {
     pub champ: i32,
@@ -1092,6 +1107,7 @@ pub fn fill_lanes(players: &mut [LivePlayer], freq: &LaneFreq, queue: i32) {
         }
     }
 }
+
 
 
 
@@ -1611,6 +1627,7 @@ mod tests {
         assert_eq!(ps[2].lane, "MID");
         assert!(ps.iter().all(|p| !p.lane_guess));
     }
+
 
 
     #[test]
